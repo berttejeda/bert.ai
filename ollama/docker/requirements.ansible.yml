@@ -1,0 +1,14 @@
+collections:
+  - amazon.aws
+  - ansible.netcommon
+  - ansible.posix
+  - ansible.windows
+  - berttejeda.utilities
+  - chocolatey.chocolatey
+  - cloud.terraform
+  - community.aws
+  - community.docker
+  - community.general
+  - community.windows
+  - kubernetes.core
+  - recordsansible.ara

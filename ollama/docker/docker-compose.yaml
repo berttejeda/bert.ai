@@ -1,0 +1,55 @@
+networks:
+  ai_net:
+    name: ai_net
+    external: true
+
+volumes:
+  histdir:
+
+services:
+  res-cli:
+    image: berttejeda/res-cli
+    networks:
+      - ai_net
+    platform: linux/amd64
+    container_name: res-cli
+    hostname: res-cli
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: 501
+        GID: 20
+    working_dir: /home/svcres/git
+    env_file: ".env"
+    ports:
+      - "3222:22"
+      - "6000:5000"
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              count: all # Or a specific number     
+    cap_add:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      memlock:
+        soft: -1
+        hard: -1      
+    volumes:
+      - $HOME/.ai:/home/svcres/.ai
+      - $HOME/.aws:/home/svcres/.aws
+      - $HOME/.ollama:/home/svcres/.ollama
+      - $HOME/.config:/home/svcres/.config
+      - $HOME/.kube:/home/svcres/.kube
+      - $HOME/.zsh_history_res-cli:/home/svcres/.zsh_history:rw
+      - $HOME/.ssh.docker:/home/svcres/.ssh
+      - $HOME/git:/home/svcres/git
+      - $PWD/entrypoint.sh:/opt/bin/entrypoint.sh
+      - $PWD:/opt/infra
+      - /var/run/docker.sock:/var/run/docker.sock
