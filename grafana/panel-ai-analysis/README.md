@@ -13,6 +13,7 @@ A Grafana **panel plugin** that analyzes panel query data using AI. It supports 
 - **InfluxDB schema awareness**: Auto-discovers measurements, tags, and fields for accurate queries
 - **Custom prompts**: Override the default analysis prompt; persisted with dashboard save
 - **Template variable awareness**: Includes both raw queries ($variable placeholders) and resolved values
+- **Dashboard context awareness**: Ask mode automatically reads all panels and queries from the current dashboard, giving the LLM full understanding of the dashboard's intent
 - **Chat UI**: Suggested questions, conversation history, copy/show-query support
 - **Markdown rendering**: AI responses rendered with full Markdown support (tables, code, lists)
 
@@ -126,10 +127,11 @@ Analyze mode:
 Ask mode:
 ┌─────────────────┐               ┌─────────────────┐
 │ ChatPanel        │──POST ───────▶│ /ask             │
-│  - SuggestedQ's  │  AskReq       │  1. schema cache │
-│  - ChatMessage   │               │  2. LLM → Flux   │
-│  - input box     │◀─── JSON ────│  3. InfluxDB exec │
-│                  │  {answer,     │  4. LLM → format  │
+│  - fetchDashboard│  AskReq +     │  1. schema cache │
+│    Context()     │  dashboard    │  2. LLM → Flux   │
+│  - SuggestedQ's  │  context      │  3. InfluxDB exec │
+│  - ChatMessage   │◀─── JSON ────│  4. LLM → format  │
+│  - input box     │  {answer,     │                   │
 │                  │   fluxQuery}  └────────┬────────┘
 └─────────────────┘                  InfluxDB + LLM
 ```
@@ -143,6 +145,31 @@ Ask mode:
 | GET    | `/providers`      | List configured LLM providers          |
 | GET    | `/schema`         | Debug — show discovered InfluxDB schema|
 | POST   | `/schema/refresh` | Invalidate cached schema               |
+
+## Dashboard Context Awareness (Ask mode)
+
+When running in **Ask mode**, the plugin automatically fetches the full dashboard model from Grafana's API on every panel mount. This gives the LLM complete awareness of:
+
+- The **dashboard title and description**
+- Every **panel's title and visualization type** (stat, timeseries, table, etc.)
+- The **Flux queries** each panel uses, including which measurements, fields, and filters are in play
+
+This context is appended to the LLM's system prompt so it understands what the dashboard is monitoring and can tailor its answers accordingly.
+
+### How it works
+
+1. `ChatPanel` mounts and calls `fetchDashboardContext()`, which extracts the dashboard UID from the current URL
+2. The utility fetches `/api/dashboards/uid/:uid` via Grafana's backend service
+3. All panels (including those inside collapsed rows) are flattened and their queries extracted
+4. The compact summary is sent with every `/ask` request as `dashboardContext`
+5. The backend formats it into a concise text block and appends it to the LLM's system prompt
+
+### Notes
+
+- The dashboard is fetched **live** — any recently saved changes to panels or queries will be reflected immediately
+- **Unsaved** dashboard edits are not included; you must save the dashboard first
+- The context is supplementary — if the API call fails (e.g., permissions), the plugin continues without it
+- Query text is compacted to ~200 characters per query to stay within token limits
 
 ## Plugin ID
 

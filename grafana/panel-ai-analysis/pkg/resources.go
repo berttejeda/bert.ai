@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"bertai-panel-ai-analysis/pkg/influx"
 	"bertai-panel-ai-analysis/pkg/provider"
@@ -128,10 +129,24 @@ func (a *App) handleListProviders(_ context.Context, req *backend.CallResourceRe
 
 // ---------- Ask (Financial Q&A) ----------
 
+type dashboardPanelSummary struct {
+	ID      int      `json:"id"`
+	Title   string   `json:"title"`
+	Type    string   `json:"type"`
+	Queries []string `json:"queries"`
+}
+
+type dashboardContext struct {
+	Title       string                  `json:"title"`
+	Description string                  `json:"description"`
+	Panels      []dashboardPanelSummary `json:"panels"`
+}
+
 type askRequest struct {
-	Question string          `json:"question"`
-	LLM      provider.Config `json:"llm"`
-	InfluxDB *influx.Config  `json:"influxdb,omitempty"`
+	Question         string            `json:"question"`
+	LLM              provider.Config   `json:"llm"`
+	InfluxDB         *influx.Config    `json:"influxdb,omitempty"`
+	DashboardContext *dashboardContext `json:"dashboardContext,omitempty"`
 }
 
 type askResponse struct {
@@ -186,9 +201,15 @@ func (a *App) handleAsk(ctx context.Context, req *backend.CallResourceRequest, s
 		})
 	}
 
+	// Build optional dashboard context string
+	var dashCtx string
+	if request.DashboardContext != nil {
+		dashCtx = formatDashboardContext(request.DashboardContext)
+	}
+
 	// Run the pipeline
-	a.logger.Debug("Running financial Q&A", "question", request.Question)
-	result, err := processor.Ask(ctx, llmProvider, request.Question)
+	a.logger.Debug("Running financial Q&A", "question", request.Question, "hasDashboardContext", dashCtx != "")
+	result, err := processor.Ask(ctx, llmProvider, request.Question, dashCtx)
 	if err != nil {
 		a.logger.Error("Financial Q&A pipeline failed", "error", err)
 		return sendJSON(sender, http.StatusInternalServerError, errorResponse{
@@ -247,6 +268,35 @@ func (a *App) handleRefreshSchema(_ context.Context, req *backend.CallResourceRe
 	}
 
 	return sendJSON(sender, http.StatusOK, map[string]string{"status": "ok", "message": "Schema cache invalidated"})
+}
+
+// formatDashboardContext renders the dashboard context into a concise text block for the LLM.
+func formatDashboardContext(ctx *dashboardContext) string {
+	if ctx == nil || len(ctx.Panels) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Dashboard Context\n"))
+	sb.WriteString(fmt.Sprintf("Dashboard: %s\n", ctx.Title))
+	if ctx.Description != "" {
+		sb.WriteString(fmt.Sprintf("Description: %s\n", ctx.Description))
+	}
+	sb.WriteString(fmt.Sprintf("\nThis dashboard contains %d panels:\n\n", len(ctx.Panels)))
+
+	for _, p := range ctx.Panels {
+		sb.WriteString(fmt.Sprintf("- **%s** (%s)\n", p.Title, p.Type))
+		for _, q := range p.Queries {
+			// Compact the query onto one line for brevity
+			compact := strings.Join(strings.Fields(q), " ")
+			if len(compact) > 200 {
+				compact = compact[:200] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("  Query: `%s`\n", compact))
+		}
+	}
+
+	return sb.String()
 }
 
 func sendJSON(sender backend.CallResourceResponseSender, status int, payload interface{}) error {

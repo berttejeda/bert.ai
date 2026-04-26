@@ -3,10 +3,11 @@ import { css } from '@emotion/css';
 import { useStyles2, Spinner } from '@grafana/ui';
 import { GrafanaTheme2 } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { PanelAIOptions, AskRequest, AskResponse, ChatMessage as ChatMessageType } from '../types';
+import { PanelAIOptions, AskRequest, AskResponse, ChatMessage as ChatMessageType, DashboardContextPayload } from '../types';
 import { PLUGIN_ID } from '../constants';
 import { ChatMessageComponent } from './ChatMessage';
 import { SuggestedQuestions } from './SuggestedQuestions';
+import { fetchDashboardContext } from '../utils/dashboardContext';
 
 interface Props {
   options: PanelAIOptions;
@@ -115,7 +116,17 @@ export const ChatPanel: React.FC<Props> = ({ options, width, height }) => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [dashboardCtx, setDashboardCtx] = useState<DashboardContextPayload | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch dashboard context once on mount
+  useEffect(() => {
+    fetchDashboardContext().then((ctx) => {
+      if (ctx) {
+        setDashboardCtx(ctx);
+      }
+    });
+  }, []);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -158,6 +169,11 @@ export const ChatPanel: React.FC<Props> = ({ options, width, height }) => {
           org: options.influxdb.org ?? '',
           bucket: options.influxdb.bucket ?? '',
         };
+      }
+
+      // Include dashboard context so the LLM knows the dashboard's intent
+      if (dashboardCtx) {
+        request.dashboardContext = dashboardCtx;
       }
 
       const response = await getBackendSrv().post<AskResponse>(

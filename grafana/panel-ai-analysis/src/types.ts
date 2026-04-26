@@ -79,10 +79,24 @@ export interface ProvidersResponse {
 
 // ---------- Ask (Financial Q&A) types ----------
 
+export interface DashboardPanelSummary {
+  id: number;
+  title: string;
+  type: string;
+  queries: string[];
+}
+
+export interface DashboardContextPayload {
+  title: string;
+  description: string;
+  panels: DashboardPanelSummary[];
+}
+
 export interface AskRequest {
   question: string;
   llm: LLMConfig;
   influxdb?: InfluxDBConfig;
+  dashboardContext?: DashboardContextPayload;
 }
 
 export interface AskResponse {

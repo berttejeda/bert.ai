@@ -41,7 +41,8 @@ func (p *Processor) Client() *influx.Client {
 }
 
 // Ask runs the full pipeline: question → LLM generates Flux → execute against InfluxDB → LLM formats results.
-func (p *Processor) Ask(ctx context.Context, llm provider.LLMProvider, question string) (*AskResult, error) {
+// dashboardContext is an optional text block describing the dashboard's panels and queries.
+func (p *Processor) Ask(ctx context.Context, llm provider.LLMProvider, question string, dashboardContext string) (*AskResult, error) {
 	// Step 1: Get schema
 	schema, err := p.schemaCache.Get(ctx, p.influx)
 	if err != nil {
@@ -50,6 +51,14 @@ func (p *Processor) Ask(ctx context.Context, llm provider.LLMProvider, question 
 
 	// Step 2: Build system prompt and generate Flux query
 	systemPrompt := BuildFluxSystemPrompt(schema, p.influx.Bucket())
+
+	// Append dashboard context if provided
+	if dashboardContext != "" {
+		systemPrompt += "\n\n" + dashboardContext +
+			"\n\nUse the dashboard context above to understand what data is being tracked " +
+			"and what metrics matter to the user. Tailor your Flux queries and answers accordingly."
+	}
+
 	userMessage := fmt.Sprintf("Convert this question to a Flux query: %s", question)
 
 	fluxRaw, err := llm.GenerateWithSystem(ctx, systemPrompt, userMessage)
