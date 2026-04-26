@@ -56,7 +56,7 @@ find ~/.ai/models -maxdepth 1 -type d | while read modelName;do
   if [[ -f "${modelFile}" ]];then 
     echo "Found Modelfile for ${modelName}"
     echo "Enabling ${modelName}"
-    ollama create gemma-4-E2B-it-uncensored-Q8_0 -f "${modelFile}"
+    ollama create "${modelName}" -f "${modelFile}"
   fi
 done
 

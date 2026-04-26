@@ -4,6 +4,8 @@ import pyaudio
 import speech_recognition as sr
 from openai import OpenAI
 from piper import PiperVoice
+from rich.console import Console
+from rich.markdown import Markdown
 
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 OLLAMA_MODEL = "gemma-4-E2B-it-uncensored-Q8_0"
@@ -52,7 +54,8 @@ def main():
     print(f"\n📝 You said: {prompt}\n")
     print("Thinking …\n")
     answer = ask_ollama(prompt)
-    print(answer)
+    console = Console()
+    console.print(Markdown(answer))
     speak(answer)
 
 
