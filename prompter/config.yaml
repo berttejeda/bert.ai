@@ -1,0 +1,34 @@
+ai:
+  provider: 'ollama'  # 'ollama' for direct Ollama API, 'openai' for OAuth-protected OpenAI-compatible API
+  api_url: "${OLLAMA_API_URL}"
+  # api_url: 'http://10.10.1.90:11434'
+  language: 'en-US'  # Set the default language for transcription
+  model: "${OLLAMA_MODEL}"
+  verify_tls: true
+  tasks:
+    translate: 
+      context: "You are a software engineer creating concise, engineering-focused content."
+      prompt: "Translate the following text to English with technical clarity."
+    summary: 
+      context: "You are a software engineer creating concise, engineering-focused content."
+      prompt: "Create a complete, concise summary under 10 words focusing on key engineering objectives."
+    rewrite: 
+      context: "You are a software engineer creating concise, engineering-focused content."
+      prompt: "Rewrite the following text clearly and concisely, focusing on key technical objectives."
+    jenkins.job.rca:
+      context: "You are a Site Reliability Engineer looking to get insight into why a jenkins job failed."
+      prompt: "Analyze the Jenkins Job Console output as input, and perform root-cause analysis for any errors or problems you detect."      
+    k8s.events.rca: 
+      context: "You are a Site Reliability Engineer responsible for maintaining Kubernetes infrastructure."
+      prompt: "Analyze the kubernetes event data as input, and perform root-cause analysis for any errors or problems you detect."
+    k8s.pod.logs.rca: 
+      context: "You are a Site Reliability Engineer responsible for maintaining Kubernetes infrastructure."
+      prompt: "Analyze the pod logs provided as input, and perform root-cause analysis for any errors you detect."
+      prompt: "Analyze the kubernetes event data as input, and perform root-cause analysis for any errors or problems you detect."
+    k8s.pod.logs.rca.frigate: 
+      context: "You are a Site Reliability Engineer responsible for maintaining Kubernetes infrastructure."
+      prompt: "Analyze the pod logs for events relating to the frigate service provided as input, and perform root-cause analysis for any errors you detect."
+    howto:
+      context: "You want a complex technical document or set of instructions boiled down to a more easy to understand bulleted, or stepwise format"
+      prompt: "Analyze the given input and provide easy to follow instructions"    
+
