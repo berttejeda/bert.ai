@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "Llm-Engineer-2",
+  "id": "open-llmengineer2-panel",
+  "backend": true,
+  "executable": "gpx_open-llmengineer2-panel",
+  "info": {
+    "keywords": ["panel"],
+    "description": "",
+    "author": {
+      "name": "Open"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "1.0.1",
+    "updated": "2025-10-29"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.4.0",
+    "plugins": []
+  }
+}

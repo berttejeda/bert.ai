@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "Panel AI Analysis",
+  "id": "bertai-panel-ai-analysis",
+  "backend": true,
+  "executable": "gpx_bertai-panel-ai-analysis",
+  "info": {
+    "keywords": ["panel", "ai", "analysis", "gemini", "ollama", "llm"],
+    "description": "AI-powered analysis of panel query data using Google Gemini, Ollama, or any OpenAI-compatible endpoint",
+    "author": {
+      "name": "bert.ai"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "version": "1.0.0"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.4.0",
+    "plugins": []
+  }
+}
