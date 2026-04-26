@@ -36,3 +36,6 @@ __pycache__
 # bytecode
 /btdashboard.egg-info
 *.pyc
+
+# environment files
+.env
