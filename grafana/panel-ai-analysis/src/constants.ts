@@ -14,3 +14,16 @@ export const MAX_DATA_POINTS = 500;
 
 export const SAMPLE_HEAD = 50;
 export const SAMPLE_TAIL = 50;
+
+export const SUGGESTED_QUESTIONS = [
+  'Which stocks are currently oversold (RSI below 30)?',
+  'Show me the top 5 stocks by market cap',
+  'Which stocks have a Piotroski score of 7 or higher?',
+  'Compare trailing P/E vs forward P/E for all stocks',
+  'Which stocks have the highest analyst target price upside?',
+  'Show me stocks with both high F-Score and low RSI',
+  'What is the current MACD signal for each stock?',
+  'Which stocks have the highest short ratio?',
+  'Show dividend yield for all stocks, sorted highest first',
+  'Compare quarterly revenue growth across all tickers',
+];

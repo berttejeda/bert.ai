@@ -19,6 +19,8 @@ type Config struct {
 // LLMProvider generates a text completion given a prompt.
 type LLMProvider interface {
 	Generate(ctx context.Context, prompt string) (string, error)
+	// GenerateWithSystem sends a system prompt + user message for chat-style APIs.
+	GenerateWithSystem(ctx context.Context, systemPrompt, userMessage string) (string, error)
 }
 
 // ProviderInfo describes a provider and whether it is configured.

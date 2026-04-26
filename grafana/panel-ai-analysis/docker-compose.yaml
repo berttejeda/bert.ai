@@ -13,6 +13,11 @@ services:
       OPENAI_COMPAT_ENDPOINT: ${OPENAI_COMPAT_ENDPOINT:-}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
       OPENAI_COMPAT_MODEL: ${OPENAI_COMPAT_MODEL:-}
+      # InfluxDB settings for Ask (Financial Q&A) mode
+      INFLUXDB_HOST: ${INFLUXDB_HOST:-http://localhost:8086}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-stocks}
 
   ollama:
     image: ollama/ollama:latest

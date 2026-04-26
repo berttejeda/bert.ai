@@ -6,6 +6,23 @@ import { DEFAULT_PROMPT } from './constants';
 export const plugin = new PanelPlugin<PanelAIOptions>(AnalysisPanel)
   .setPanelOptions((builder) => {
     builder
+      // ── Mode ──
+      .addSelect({
+        path: 'mode',
+        name: 'Panel Mode',
+        description:
+          'Analyze: AI analysis of existing panel query data. ' +
+          'Ask: Chat-style financial Q&A that queries InfluxDB directly.',
+        defaultValue: 'analyze',
+        settings: {
+          options: [
+            { value: 'analyze', label: 'Analyze (panel data)' },
+            { value: 'ask', label: 'Ask (financial Q&A)' },
+          ],
+        },
+        category: ['Mode'],
+      })
+
       // ── Prompt (persisted on dashboard save) ──
       .addTextInput({
         path: 'prompt',
@@ -16,6 +33,7 @@ export const plugin = new PanelPlugin<PanelAIOptions>(AnalysisPanel)
         defaultValue: DEFAULT_PROMPT,
         settings: { useTextarea: true, rows: 6 },
         category: ['Prompt'],
+        showIf: (opts) => opts.mode !== 'ask',
       })
 
       // ── Auto-analyze toggle ──
@@ -25,6 +43,7 @@ export const plugin = new PanelPlugin<PanelAIOptions>(AnalysisPanel)
         description: 'Automatically re-run analysis when panel data changes',
         defaultValue: false,
         category: ['Behavior'],
+        showIf: (opts) => opts.mode !== 'ask',
       })
 
       // ── LLM Provider ──
@@ -71,5 +90,40 @@ export const plugin = new PanelPlugin<PanelAIOptions>(AnalysisPanel)
           'Leave blank to use the environment variable.',
         defaultValue: '',
         category: ['LLM Provider'],
+      })
+
+      // ── InfluxDB (Ask mode only) ──
+      .addTextInput({
+        path: 'influxdb.url',
+        name: 'InfluxDB URL',
+        description:
+          'InfluxDB URL override for Ask mode. Leave blank to use the INFLUXDB_HOST environment variable.',
+        defaultValue: '',
+        category: ['InfluxDB (Ask mode)'],
+        showIf: (opts) => opts.mode === 'ask',
+      })
+      .addTextInput({
+        path: 'influxdb.token',
+        name: 'InfluxDB Token',
+        description: 'Leave blank to use INFLUXDB_TOKEN env var.',
+        defaultValue: '',
+        category: ['InfluxDB (Ask mode)'],
+        showIf: (opts) => opts.mode === 'ask',
+      })
+      .addTextInput({
+        path: 'influxdb.org',
+        name: 'InfluxDB Org',
+        description: 'Leave blank to use INFLUXDB_ORG env var.',
+        defaultValue: '',
+        category: ['InfluxDB (Ask mode)'],
+        showIf: (opts) => opts.mode === 'ask',
+      })
+      .addTextInput({
+        path: 'influxdb.bucket',
+        name: 'InfluxDB Bucket',
+        description: 'Leave blank to use INFLUXDB_BUCKET env var.',
+        defaultValue: '',
+        category: ['InfluxDB (Ask mode)'],
+        showIf: (opts) => opts.mode === 'ask',
       });
   });

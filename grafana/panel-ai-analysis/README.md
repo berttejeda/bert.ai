@@ -1,13 +1,19 @@
 # Grafana Panel AI Analysis
 
-A Grafana **panel plugin** that analyzes panel query data using AI. Instead of screenshots, it sends the actual query results and panel metadata to an LLM for analysis.
+A Grafana **panel plugin** that analyzes panel query data using AI. It supports two modes:
+
+- **Analyze mode**: Sends actual query results and panel metadata to an LLM for analysis
+- **Ask mode**: Chat-style financial Q&A — the LLM generates Flux queries, executes them against InfluxDB, and formats the results
 
 ## Features
 
 - **Multi-LLM support**: Google Gemini, Ollama (local), or any OpenAI-compatible endpoint
-- **Data-driven analysis**: Operates on actual query results (DataFrames), not rendered images
+- **Analyze mode**: Data-driven analysis of existing panel query results (DataFrames)
+- **Ask mode**: Natural-language financial Q&A with automatic Flux query generation
+- **InfluxDB schema awareness**: Auto-discovers measurements, tags, and fields for accurate queries
 - **Custom prompts**: Override the default analysis prompt; persisted with dashboard save
 - **Template variable awareness**: Includes both raw queries ($variable placeholders) and resolved values
+- **Chat UI**: Suggested questions, conversation history, copy/show-query support
 - **Markdown rendering**: AI responses rendered with full Markdown support (tables, code, lists)
 
 ## Quick Start
@@ -63,6 +69,19 @@ OPENAI_COMPAT_MODEL=gpt-4o
 
 Panel-level options can override these defaults per panel.
 
+### InfluxDB Configuration (Ask mode)
+
+Required only if you want to use the **Ask (Financial Q&A)** mode:
+
+```
+INFLUXDB_HOST=http://localhost:8086
+INFLUXDB_TOKEN=your_influxdb_token_here
+INFLUXDB_ORG=your_org
+INFLUXDB_BUCKET=stocks
+```
+
+These can also be overridden per-panel in the panel options under **InfluxDB (Ask mode)**.
+
 ### Local Ollama with Docker
 
 ```bash
@@ -91,6 +110,8 @@ npm run lint
 
 ```
 Frontend (React)                    Backend (Go)
+
+Analyze mode:
 ┌─────────────────┐               ┌─────────────────┐
 │ AnalysisPanel    │──POST ───────▶│ /analyze         │
 │  - props.data    │  AnalyzeReq   │  - provider.New()│
@@ -101,7 +122,27 @@ Frontend (React)                    Backend (Go)
                                   ┌─────────┼─────────┐
                                   ▼         ▼         ▼
                               Gemini    Ollama    OpenAI
+
+Ask mode:
+┌─────────────────┐               ┌─────────────────┐
+│ ChatPanel        │──POST ───────▶│ /ask             │
+│  - SuggestedQ's  │  AskReq       │  1. schema cache │
+│  - ChatMessage   │               │  2. LLM → Flux   │
+│  - input box     │◀─── JSON ────│  3. InfluxDB exec │
+│                  │  {answer,     │  4. LLM → format  │
+│                  │   fluxQuery}  └────────┬────────┘
+└─────────────────┘                  InfluxDB + LLM
 ```
+
+### API Endpoints
+
+| Method | Path              | Description                            |
+|--------|-------------------|----------------------------------------|
+| POST   | `/analyze`        | Analyze mode — panel data analysis     |
+| POST   | `/ask`            | Ask mode — financial Q&A pipeline      |
+| GET    | `/providers`      | List configured LLM providers          |
+| GET    | `/schema`         | Debug — show discovered InfluxDB schema|
+| POST   | `/schema/refresh` | Invalidate cached schema               |
 
 ## Plugin ID
 

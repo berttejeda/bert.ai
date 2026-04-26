@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	defaultOllamaEndpoint      = "http://localhost:11434"
-	defaultOllamaModel         = "llama3.1"
+	defaultOllamaEndpoint       = "http://localhost:11434"
+	defaultOllamaModel          = "llama3.1"
 	defaultOpenAICompatEndpoint = "https://api.openai.com/v1"
 )
 
@@ -81,12 +81,23 @@ func newOpenAICompat(cfg Config) (*openAICompatProvider, error) {
 }
 
 func (o *openAICompatProvider) Generate(ctx context.Context, prompt string) (string, error) {
+	return o.doChat(ctx, []chatMessage{
+		{Role: "user", Content: prompt},
+	})
+}
+
+func (o *openAICompatProvider) GenerateWithSystem(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	return o.doChat(ctx, []chatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userMessage},
+	})
+}
+
+func (o *openAICompatProvider) doChat(ctx context.Context, messages []chatMessage) (string, error) {
 	reqBody := chatRequest{
-		Model: o.model,
-		Messages: []chatMessage{
-			{Role: "user", Content: prompt},
-		},
-		Stream: false,
+		Model:    o.model,
+		Messages: messages,
+		Stream:   false,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

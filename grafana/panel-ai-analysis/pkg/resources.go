@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"bertai-panel-ai-analysis/pkg/influx"
 	"bertai-panel-ai-analysis/pkg/provider"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -123,6 +124,129 @@ func (a *App) handleListProviders(_ context.Context, req *backend.CallResourceRe
 		Providers:     provider.AvailableProviders(),
 		ServerDefault: provider.ServerDefault(),
 	})
+}
+
+// ---------- Ask (Financial Q&A) ----------
+
+type askRequest struct {
+	Question string          `json:"question"`
+	LLM      provider.Config `json:"llm"`
+	InfluxDB *influx.Config  `json:"influxdb,omitempty"`
+}
+
+type askResponse struct {
+	Answer    string `json:"answer"`
+	FluxQuery string `json:"fluxQuery,omitempty"`
+	RowCount  int    `json:"rowCount"`
+	Error     string `json:"error,omitempty"`
+}
+
+// handleAsk processes a financial Q&A request.
+func (a *App) handleAsk(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
+	if req.Method != http.MethodPost {
+		return sendJSON(sender, http.StatusMethodNotAllowed, errorResponse{
+			Error:   "method_not_allowed",
+			Message: "Only POST is accepted",
+		})
+	}
+
+	var request askRequest
+	if err := json.Unmarshal(req.Body, &request); err != nil {
+		a.logger.Error("Failed to unmarshal ask request", "error", err)
+		return sendJSON(sender, http.StatusBadRequest, errorResponse{
+			Error:   "invalid_request",
+			Message: fmt.Sprintf("Failed to parse request body: %v", err),
+		})
+	}
+
+	if request.Question == "" {
+		return sendJSON(sender, http.StatusBadRequest, errorResponse{
+			Error:   "missing_question",
+			Message: "The 'question' field is required.",
+		})
+	}
+
+	// Resolve the financial processor (uses per-request override or cached default)
+	processor, err := a.getProcessor(request.InfluxDB)
+	if err != nil {
+		a.logger.Error("Failed to get financial processor", "error", err)
+		return sendJSON(sender, http.StatusBadRequest, errorResponse{
+			Error:   "influxdb_error",
+			Message: fmt.Sprintf("Failed to connect to InfluxDB: %v", err),
+		})
+	}
+
+	// Resolve LLM provider
+	llmProvider, err := provider.New(request.LLM)
+	if err != nil {
+		a.logger.Error("Failed to create LLM provider", "error", err, "provider", request.LLM.Provider)
+		return sendJSON(sender, http.StatusBadRequest, errorResponse{
+			Error:   "provider_error",
+			Message: fmt.Sprintf("Failed to initialize LLM provider %q: %v", request.LLM.Provider, err),
+		})
+	}
+
+	// Run the pipeline
+	a.logger.Debug("Running financial Q&A", "question", request.Question)
+	result, err := processor.Ask(ctx, llmProvider, request.Question)
+	if err != nil {
+		a.logger.Error("Financial Q&A pipeline failed", "error", err)
+		return sendJSON(sender, http.StatusInternalServerError, errorResponse{
+			Error:   "ask_error",
+			Message: fmt.Sprintf("Q&A pipeline failed: %v", err),
+		})
+	}
+
+	return sendJSON(sender, http.StatusOK, askResponse{
+		Answer:    result.Answer,
+		FluxQuery: result.FluxQuery,
+		RowCount:  result.RowCount,
+		Error:     result.Error,
+	})
+}
+
+// handleGetSchema returns the discovered InfluxDB schema (debug endpoint).
+func (a *App) handleGetSchema(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
+	if req.Method != http.MethodGet {
+		return sendJSON(sender, http.StatusMethodNotAllowed, errorResponse{
+			Error:   "method_not_allowed",
+			Message: "Only GET is accepted",
+		})
+	}
+
+	processor, err := a.getProcessor(nil)
+	if err != nil {
+		return sendJSON(sender, http.StatusBadRequest, errorResponse{
+			Error:   "influxdb_error",
+			Message: fmt.Sprintf("InfluxDB not configured: %v", err),
+		})
+	}
+
+	schema, err := a.schemaCache.Get(ctx, processor.Client())
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, errorResponse{
+			Error:   "schema_error",
+			Message: fmt.Sprintf("Failed to discover schema: %v", err),
+		})
+	}
+
+	return sendJSON(sender, http.StatusOK, map[string]string{"schema": schema})
+}
+
+// handleRefreshSchema invalidates the cached schema.
+func (a *App) handleRefreshSchema(_ context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
+	if req.Method != http.MethodPost {
+		return sendJSON(sender, http.StatusMethodNotAllowed, errorResponse{
+			Error:   "method_not_allowed",
+			Message: "Only POST is accepted",
+		})
+	}
+
+	if a.schemaCache != nil {
+		a.schemaCache.Invalidate()
+	}
+
+	return sendJSON(sender, http.StatusOK, map[string]string{"status": "ok", "message": "Schema cache invalidated"})
 }
 
 func sendJSON(sender backend.CallResourceResponseSender, status int, payload interface{}) error {

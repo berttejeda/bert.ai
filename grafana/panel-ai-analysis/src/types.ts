@@ -11,10 +11,21 @@ export interface LLMConfig {
 
 // ---------- Panel Options (persisted on dashboard save) ----------
 
+export type PanelMode = 'analyze' | 'ask';
+
+export interface InfluxDBConfig {
+  url: string;
+  token: string;
+  org: string;
+  bucket: string;
+}
+
 export interface PanelAIOptions {
+  mode: PanelMode;
   prompt: string;
   autoAnalyze: boolean;
   llm: LLMConfig;
+  influxdb: InfluxDBConfig;
 }
 
 // ---------- Request / Response ----------
@@ -64,4 +75,28 @@ export interface ProviderInfo {
 
 export interface ProvidersResponse {
   providers: ProviderInfo[];
+}
+
+// ---------- Ask (Financial Q&A) types ----------
+
+export interface AskRequest {
+  question: string;
+  llm: LLMConfig;
+  influxdb?: InfluxDBConfig;
+}
+
+export interface AskResponse {
+  answer: string;
+  fluxQuery?: string;
+  rowCount: number;
+  error?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  fluxQuery?: string;
+  rowCount?: number;
+  timestamp: number;
 }

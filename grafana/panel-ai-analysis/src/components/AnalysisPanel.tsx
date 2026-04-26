@@ -10,6 +10,7 @@ import { serializeDataFrames } from '../utils/dataSerializer';
 import { extractPanelConfig, extractRawTargets, extractResolvedVariables } from '../utils/panelConfig';
 import { AnalysisResult } from './AnalysisResult';
 import { PromptEditor } from './PromptEditor';
+import { ChatPanel } from './ChatPanel';
 
 interface Props extends PanelProps<PanelAIOptions> {}
 
@@ -183,6 +184,11 @@ export const AnalysisPanel: React.FC<Props> = ({ data, options, width, height, o
     },
     [options, onOptionsChange]
   );
+
+  // If mode is 'ask', render the chat panel instead
+  if (options.mode === 'ask') {
+    return <ChatPanel options={options} width={width} height={height} />;
+  }
 
   return (
     <div className={styles.wrapper} style={{ width, height }}>

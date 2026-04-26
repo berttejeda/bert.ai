@@ -31,6 +31,14 @@ func newGemini(cfg Config) (*geminiProvider, error) {
 }
 
 func (g *geminiProvider) Generate(ctx context.Context, prompt string) (string, error) {
+	return g.doGenerate(ctx, "", prompt)
+}
+
+func (g *geminiProvider) GenerateWithSystem(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	return g.doGenerate(ctx, systemPrompt, userMessage)
+}
+
+func (g *geminiProvider) doGenerate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	client, err := genai.NewClient(ctx, option.WithAPIKey(g.apiKey))
 	if err != nil {
 		return "", fmt.Errorf("failed to create Gemini client: %w", err)
@@ -38,7 +46,14 @@ func (g *geminiProvider) Generate(ctx context.Context, prompt string) (string, e
 	defer client.Close()
 
 	model := client.GenerativeModel(g.model)
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+
+	if systemPrompt != "" {
+		model.SystemInstruction = &genai.Content{
+			Parts: []genai.Part{genai.Text(systemPrompt)},
+		}
+	}
+
+	resp, err := model.GenerateContent(ctx, genai.Text(userPrompt))
 	if err != nil {
 		return "", fmt.Errorf("Gemini API error: %w", err)
 	}
