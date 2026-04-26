@@ -1,0 +1,7 @@
+openai
+openai-whisper
+piper-tts
+pyaudio
+rich
+soundfile
+SpeechRecognition
