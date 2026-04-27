@@ -168,6 +168,7 @@ export const ChatPanel: React.FC<Props> = ({ options, width, height }) => {
           token: options.influxdb.token ?? '',
           org: options.influxdb.org ?? '',
           bucket: options.influxdb.bucket ?? '',
+          timeout: options.influxdb.timeout || undefined,
         };
       }
 

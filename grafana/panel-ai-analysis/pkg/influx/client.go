@@ -4,34 +4,48 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
+// DefaultTimeout is the default HTTP timeout for InfluxDB requests (seconds).
+const DefaultTimeout = 60
+
 // Config holds InfluxDB connection parameters.
 type Config struct {
-	URL    string `json:"url"`
-	Token  string `json:"token"`
-	Org    string `json:"org"`
-	Bucket string `json:"bucket"`
+	URL     string `json:"url"`
+	Token   string `json:"token"`
+	Org     string `json:"org"`
+	Bucket  string `json:"bucket"`
+	Timeout int    `json:"timeout,omitempty"` // HTTP timeout in seconds; 0 means use DefaultTimeout
 }
 
 // Client wraps an InfluxDB v2 client for executing Flux queries.
 type Client struct {
-	client   influxdb2.Client
-	queryAPI api.QueryAPI
-	org      string
-	bucket   string
+	client     influxdb2.Client
+	queryAPI   api.QueryAPI
+	org        string
+	bucket     string
+	timeoutSec int
 }
 
 // ConfigFromEnv returns an InfluxDB Config populated from environment variables.
 func ConfigFromEnv() Config {
+	timeout := 0
+	if s := os.Getenv("INFLUXDB_TIMEOUT"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			timeout = v
+		}
+	}
 	return Config{
-		URL:    os.Getenv("INFLUXDB_HOST"),
-		Token:  os.Getenv("INFLUXDB_TOKEN"),
-		Org:    os.Getenv("INFLUXDB_ORG"),
-		Bucket: os.Getenv("INFLUXDB_BUCKET"),
+		URL:     os.Getenv("INFLUXDB_HOST"),
+		Token:   os.Getenv("INFLUXDB_TOKEN"),
+		Org:     os.Getenv("INFLUXDB_ORG"),
+		Bucket:  os.Getenv("INFLUXDB_BUCKET"),
+		Timeout: timeout,
 	}
 }
 
@@ -49,6 +63,9 @@ func MergeWithEnv(cfg Config) Config {
 	}
 	if cfg.Bucket == "" {
 		cfg.Bucket = env.Bucket
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = env.Timeout
 	}
 	return cfg
 }
@@ -73,20 +90,35 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("influxdb bucket is required")
 	}
 
-	client := influxdb2.NewClient(cfg.URL, cfg.Token)
+	timeoutSec := cfg.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = DefaultTimeout
+	}
+
+	opts := influxdb2.DefaultOptions().SetHTTPRequestTimeout(uint(timeoutSec))
+	client := influxdb2.NewClientWithOptions(cfg.URL, cfg.Token, opts)
 	queryAPI := client.QueryAPI(cfg.Org)
 
 	return &Client{
-		client:   client,
-		queryAPI: queryAPI,
-		org:      cfg.Org,
-		bucket:   cfg.Bucket,
+		client:     client,
+		queryAPI:   queryAPI,
+		org:        cfg.Org,
+		bucket:     cfg.Bucket,
+		timeoutSec: timeoutSec,
 	}, nil
 }
 
 // Bucket returns the configured bucket name.
 func (c *Client) Bucket() string {
 	return c.bucket
+}
+
+// Timeout returns the configured timeout as a time.Duration.
+func (c *Client) Timeout() time.Duration {
+	if c.timeoutSec <= 0 {
+		return time.Duration(DefaultTimeout) * time.Second
+	}
+	return time.Duration(c.timeoutSec) * time.Second
 }
 
 // Execute runs a Flux query and returns the results as a slice of row maps.

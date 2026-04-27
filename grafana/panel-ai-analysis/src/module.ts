@@ -125,5 +125,16 @@ export const plugin = new PanelPlugin<PanelAIOptions>(AnalysisPanel)
         defaultValue: '',
         category: ['InfluxDB (Ask mode)'],
         showIf: (opts) => opts.mode === 'ask',
+      })
+      .addNumberInput({
+        path: 'influxdb.timeout',
+        name: 'InfluxDB Timeout (seconds)',
+        description:
+          'HTTP timeout for InfluxDB requests including schema discovery and query execution. ' +
+          'Default is 60 seconds. Increase if queries are timing out.',
+        defaultValue: 60,
+        settings: { min: 5, max: 600, integer: true },
+        category: ['InfluxDB (Ask mode)'],
+        showIf: (opts) => opts.mode === 'ask',
       });
   });

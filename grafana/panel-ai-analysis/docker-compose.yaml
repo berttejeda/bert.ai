@@ -18,6 +18,7 @@ services:
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-}
       INFLUXDB_ORG: ${INFLUXDB_ORG:-}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-stocks}
+      INFLUXDB_TIMEOUT: ${INFLUXDB_TIMEOUT:-60}
 
   ollama:
     image: ollama/ollama:latest

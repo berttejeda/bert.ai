@@ -19,6 +19,7 @@ import (
 type App struct {
 	logger      log.Logger
 	schemaCache *influx.SchemaCache
+	promptCfg   *financial.PromptConfig
 
 	// Cached default processor (from env vars), lazily initialized
 	mu               sync.Mutex
@@ -50,9 +51,20 @@ func NewApp(_ context.Context) (*App, error) {
 		logger.Info("InfluxDB not configured — Financial Q&A (Ask mode) will be unavailable unless configured per-panel")
 	}
 
+	// Load prompt configuration from YAML (falls back to compiled defaults if not found)
+	promptCfg, err := financial.LoadPromptConfig()
+	if err != nil {
+		logger.Warn("Failed to load prompts.yaml, using compiled defaults", "error", err)
+	} else if promptCfg != nil {
+		logger.Info("Loaded prompt configuration from prompts.yaml")
+	} else {
+		logger.Info("No prompts.yaml found, using compiled defaults")
+	}
+
 	return &App{
 		logger:      logger,
 		schemaCache: influx.NewSchemaCache(5 * time.Minute),
+		promptCfg:   promptCfg,
 	}, nil
 }
 
@@ -66,7 +78,7 @@ func (a *App) getProcessor(override *influx.Config) (*financial.Processor, error
 		if err != nil {
 			return nil, fmt.Errorf("failed to create InfluxDB client from panel config: %w", err)
 		}
-		return financial.NewProcessor(client, a.schemaCache), nil
+		return financial.NewProcessor(client, a.schemaCache, a.promptCfg), nil
 	}
 
 	// Use cached default
@@ -88,7 +100,7 @@ func (a *App) getProcessor(override *influx.Config) (*financial.Processor, error
 	}
 
 	a.defaultClient = client
-	a.defaultProcessor = financial.NewProcessor(client, a.schemaCache)
+	a.defaultProcessor = financial.NewProcessor(client, a.schemaCache, a.promptCfg)
 	a.logger.Info("Default InfluxDB client initialized", "url", cfg.URL, "bucket", cfg.Bucket)
 
 	return a.defaultProcessor, nil

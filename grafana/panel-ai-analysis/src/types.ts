@@ -18,6 +18,7 @@ export interface InfluxDBConfig {
   token: string;
   org: string;
   bucket: string;
+  timeout?: number; // HTTP timeout in seconds; 0 or undefined = server default (60s)
 }
 
 export interface PanelAIOptions {

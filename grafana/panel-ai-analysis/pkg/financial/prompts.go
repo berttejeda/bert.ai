@@ -2,9 +2,43 @@ package financial
 
 import "fmt"
 
+// defaultFormatPrompt is the fallback format prompt when no YAML config is loaded.
+const defaultFormatPrompt = `You are a financial analyst assistant. Format and summarize the following Flux query results in markdown.
+
+Include:
+- A brief summary of the findings
+- A markdown table with the key data (max ~25 rows)
+- Any relevant insights or patterns
+
+Keep the response concise and focused on answering the user's question.
+Do not include the raw Flux query unless the user asks for it.
+Use clear column headers and proper number formatting (e.g., commas for thousands, 2 decimal places for percentages).`
+
 // BuildFluxSystemPrompt constructs the system prompt for Flux query generation.
-// It includes the dynamically discovered schema, bucket name, and curated examples.
-func BuildFluxSystemPrompt(schema, bucket string) string {
+// If a PromptConfig was loaded from YAML, it renders the templates; otherwise
+// falls back to the compiled-in default.
+func BuildFluxSystemPrompt(schema, bucket string, cfg *PromptConfig) string {
+	if cfg != nil && cfg.FluxSystemPrompt != "" {
+		rendered, err := cfg.RenderFluxSystemPrompt(PromptTemplateData{Schema: schema, Bucket: bucket})
+		if err == nil {
+			return rendered
+		}
+		// Fall through to default on render error
+	}
+	return buildDefaultFluxSystemPrompt(schema, bucket)
+}
+
+// BuildFormatPrompt constructs the system prompt for formatting query results.
+func BuildFormatPrompt(cfg *PromptConfig) string {
+	if cfg != nil && cfg.FormatPrompt != "" {
+		return cfg.FormatPrompt
+	}
+	return defaultFormatPrompt
+}
+
+// buildDefaultFluxSystemPrompt is the compiled-in fallback (identical to the
+// original hardcoded prompt) used when prompts.yaml is not found.
+func buildDefaultFluxSystemPrompt(schema, bucket string) string {
 	return fmt.Sprintf(`You are an expert at writing InfluxDB Flux queries for financial data analysis.
 
 # InfluxDB Schema
@@ -29,15 +63,24 @@ The bucket name is "%s".
 - For cross-measurement queries, use import "join" and join.inner()
 - When renaming _value, use |> rename(columns: {_value: "new_name"}) after keep()
 
+# COMMON PITFALLS — avoid these mistakes:
+- NEVER group multiple fields with different types (float vs string) into one renamed column. Instead, query each field separately and join or pivot them into distinct columns.
+- When querying multiple fields from the same measurement, prefer |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value") to produce one column per field, rather than renaming _value to a single name.
+- Tags like bollinger_signal are strings, while fields like rsi, macd are floats — never mix them in the same _value column.
+- After |> group(columns: ["_field"]) |> last(), the result has one row per field per group. A join between two such streams requires matching on the SAME columns.
+- When joining two streams that each have a single renamed _value column, ensure the left and right schemas are compatible. If you need multiple distinct values from one measurement, query them separately (one variable per field) and join pairwise, or use pivot.
+- Use |> keep(columns: [...]) BEFORE |> rename(...) to avoid schema collisions from leftover columns.
+
 # CONSTRAINTS:
-- Respond ONLY with the Flux query, wrapped in ` + "```flux" + ` ... ` + "```" + ` code fences
+- Respond ONLY with the Flux query, wrapped in `+"```flux"+` ... `+"```"+` code fences
 - The query must be valid Flux syntax
-- Do NOT include any explanation outside the code fences
+- Flux uses // for comments, NEVER use # for comments (# is invalid Flux syntax)
+- Do NOT include any explanation or comments outside the code fences
 
 # Examples:
 
 User: "Which stocks currently have RSI below 30 (oversold)?"
-` + "```flux" + `
+`+"```flux"+`
 from(bucket: "%s")
   |> range(start: -7d)
   |> filter(fn: (r) => r._measurement == "stock_data" and r._field == "rsi")
@@ -46,10 +89,10 @@ from(bucket: "%s")
   |> map(fn: (r) => ({ticker: r.ticker, rsi: r._value}))
   |> group()
   |> sort(columns: ["rsi"])
-` + "```" + `
+`+"```"+`
 
 User: "Show me trailing P/E, forward P/E, and profit margin for all stocks in a table"
-` + "```flux" + `
+`+"```flux"+`
 import "join"
 
 trailing = from(bucket: "%s")
@@ -79,10 +122,10 @@ j1 = join.inner(left: trailing, right: forward, on: (l, r) => l.ticker == r.tick
 join.inner(left: j1, right: margin, on: (l, r) => l.ticker == r.ticker,
   as: (l, r) => ({ticker: l.ticker, trailing_pe: l.trailing_pe, forward_pe: l.forward_pe, profit_margin: r.profit_margin}))
   |> sort(columns: ["ticker"])
-` + "```" + `
+`+"```"+`
 
 User: "Which stocks have the highest analyst target price upside vs current price?"
-` + "```flux" + `
+`+"```flux"+`
 import "join"
 
 price = from(bucket: "%s")
@@ -108,10 +151,10 @@ join.inner(left: price, right: target, on: (l, r) => l.ticker == r.ticker,
   }))
   |> sort(columns: ["upside_pct"], desc: true)
   |> limit(n: 25)
-` + "```" + `
+`+"```"+`
 
 User: "Find stocks with Piotroski score >= 7 and RSI < 50"
-` + "```flux" + `
+`+"```flux"+`
 import "join"
 
 piotroski = from(bucket: "%s")
@@ -133,10 +176,10 @@ rsi = from(bucket: "%s")
 join.inner(left: piotroski, right: rsi, on: (l, r) => l.ticker == r.ticker,
   as: (l, r) => ({ticker: l.ticker, piotroski_score: l.piotroski_score, rsi: r.rsi}))
   |> sort(columns: ["piotroski_score"], desc: true)
-` + "```" + `
+`+"```"+`
 
 User: "Show me the EPS actual vs estimate history for NVDA"
-` + "```flux" + `
+`+"```flux"+`
 from(bucket: "%s")
   |> range(start: -365d)
   |> filter(fn: (r) => r._measurement == "eodhd_earnings")
@@ -145,26 +188,11 @@ from(bucket: "%s")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"], desc: true)
   |> limit(n: 25)
-` + "```",
+`+"```",
 		schema, bucket, bucket,
-		// Examples all use the same bucket
 		bucket, bucket, bucket, bucket,
 		bucket, bucket,
 		bucket, bucket,
 		bucket,
 	)
-}
-
-// BuildFormatPrompt constructs the system prompt for formatting query results.
-func BuildFormatPrompt() string {
-	return `You are a financial analyst assistant. Format and summarize the following Flux query results in markdown.
-
-Include:
-- A brief summary of the findings
-- A markdown table with the key data (max ~25 rows)
-- Any relevant insights or patterns
-
-Keep the response concise and focused on answering the user's question.
-Do not include the raw Flux query unless the user asks for it.
-Use clear column headers and proper number formatting (e.g., commas for thousands, 2 decimal places for percentages).`
 }
