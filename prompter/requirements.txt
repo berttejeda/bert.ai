@@ -4,3 +4,4 @@ first
 loguru
 requests>=2.28.0,<3.0.0
 keyring>=25.7.0,<26.0.0
+python-dotenv>=1.0.0

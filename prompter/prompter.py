@@ -6,6 +6,8 @@ import base64
 import http.client
 import json
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from pathlib import Path
 import requests
 import sys
@@ -24,7 +26,7 @@ except ImportError:
     HAS_FASTAPI = False
 
 __docstring__ = 'Commandline AI Prompt Interface'
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 script_file_path = Path(__file__).resolve()
 script_dir = script_file_path.parent
