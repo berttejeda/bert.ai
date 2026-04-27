@@ -16,6 +16,10 @@ A Grafana **panel plugin** that analyzes panel query data using AI. It supports 
 - **Dashboard context awareness**: Ask mode automatically reads all panels and queries from the current dashboard, giving the LLM full understanding of the dashboard's intent
 - **Chat UI**: Suggested questions, conversation history, copy/show-query support
 - **Markdown rendering**: AI responses rendered with full Markdown support (tables, code, lists)
+- **Externalized prompts**: All LLM prompts loaded from `prompts.yaml` — tune without recompiling
+- **Query retry with error feedback**: Failed Flux queries are automatically fed back to the LLM for self-correction (up to 2 retries)
+- **Configurable InfluxDB timeout**: Adjustable via environment variable or panel option
+- **`--version` flag**: Backend binary reports its version at the command line
 
 ## Quick Start
 
@@ -83,6 +87,32 @@ INFLUXDB_BUCKET=stocks
 
 These can also be overridden per-panel in the panel options under **InfluxDB (Ask mode)**.
 
+#### InfluxDB Timeout
+
+The HTTP client and query execution timeout defaults to **60 seconds**. Override via:
+
+```
+INFLUXDB_TIMEOUT=120
+```
+
+Or set it per-panel in the panel options (range: 5–600 seconds). Panel option takes priority over the environment variable.
+
+### Prompt Configuration
+
+All LLM prompts and few-shot examples are stored in `prompts.yaml`. The file is searched for at startup in this order:
+
+1. Path specified by `PROMPTS_CONFIG_PATH` environment variable
+2. The plugin executable's directory (where Grafana unpacks the plugin)
+3. The current working directory
+
+If `prompts.yaml` is not found, compiled-in defaults are used.
+
+The YAML supports Go `text/template` variables:
+- `{{.Schema}}` — the auto-discovered InfluxDB schema
+- `{{.Bucket}}` — the configured bucket name
+
+Edit `prompts.yaml` and restart Grafana to apply changes — no recompile needed.
+
 ### Local Ollama with Docker
 
 ```bash
@@ -105,6 +135,15 @@ npm run test:ci
 
 # Lint
 npm run lint
+```
+
+### Version Management
+
+The backend binary version is read from `package.json` at build time and injected via `-ldflags`. Keep `package.json` and `src/plugin.json` versions in sync.
+
+```bash
+# Check the compiled version
+./dist/gpx_bertai-panel-ai-analysis_linux_amd64 --version
 ```
 
 ## Architecture
@@ -170,6 +209,19 @@ This context is appended to the LLM's system prompt so it understands what the d
 - **Unsaved** dashboard edits are not included; you must save the dashboard first
 - The context is supplementary — if the API call fails (e.g., permissions), the plugin continues without it
 - Query text is compacted to ~200 characters per query to stay within token limits
+
+## Query Retry & Self-Correction
+
+When Ask mode generates a Flux query that fails execution (e.g., schema collisions, syntax errors), the pipeline automatically:
+
+1. Sends the **failed query + InfluxDB error message** back to the LLM
+2. The LLM generates a corrected query
+3. The corrected query is executed (up to **2 retries**, 3 total attempts)
+4. Stops early if the LLM produces an identical query or the LLM call itself fails
+
+Additionally, the system prompt includes a **Common Pitfalls** section that warns the LLM about frequent Flux mistakes (mixing field types, incorrect join patterns, `#` vs `//` comments).
+
+LLM-generated `#` comments (invalid Flux syntax) are automatically sanitized to `//` comments before execution.
 
 ## Plugin ID
 
