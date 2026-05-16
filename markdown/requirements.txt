@@ -1,0 +1,7 @@
+markdown>=3.0
+pymdown-extensions>=10.0
+markdown-exec[ansi]>=1.0
+python-frontmatter>=1.0.0
+PyYAML>=6.0
+requests>=2.0
+livereload>=2.7.0
