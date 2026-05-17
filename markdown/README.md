@@ -1,72 +1,161 @@
 # AI-Enabled Markdown Renderer
 
-This project provides a standalone Python script (`render_md.py`) that converts Markdown files into rich HTML documents. It goes beyond standard Markdown conversion by treating Python code blocks as executable chunks and optionally sending their code and output to an LLM (Large Language Model) to generate dynamic, AI-assisted explanations and insights that seamlessly replace the code blocks in the final output.
+`render_md.py` converts Markdown files into interactive, AI-augmented HTML documents. Code blocks (`python`, `bash`, `sh`) are executed locally, their output can be piped to an LLM, and the rendered page updates live — all served from a single built-in HTTP server with no external dependencies beyond Python.
 
 ## Key Features
-- **Executable Code Blocks:** Python code blocks are executed locally, and their outputs can be displayed or piped into an LLM prompt.
-- **LLM Integration:** Automatically contact a local or remote OpenAI-compatible API (such as `llama.cpp` or Ollama) to summarize, refactor, or explain code and its output.
-- **Global & Local YAML Configuration:** Define variables natively in your Markdown document's YAML frontmatter, and dynamically override them via YAML-formatted comments directly inside your Python code blocks.
-- **Variable Injection:** All YAML variables are automatically injected as native Python variables into the code's execution scope.
-- **Persistent Global State:** Variables, imports, and function definitions persist across multiple code blocks within the same document, simulating an interactive notebook/REPL experience.
-- **Beautiful HTML Output:** Automatically renders to a GitHub-styled HTML file and opens it natively in your default browser.
+
+| Feature | Description |
+|---|---|
+| **Executable Code Blocks** | `python`, `bash`, and `sh` fences are executed in-process |
+| **LLM Integration** | Any OpenAI-compatible API (Ollama, llama.cpp, remote) can post-process output |
+| **Jinja2 Templating** | Variables from frontmatter and CLI are interpolated in the document *and* inside code blocks before execution |
+| **On-Demand Execution** | By default, code blocks render with an **Execute** button; execution only happens when clicked |
+| **Auto-Execute Mode** | Pass `--execute-codeblocks-on-startup` to execute all blocks on load |
+| **Two-Pass Async Rendering** | Fast initial render (instant page load) followed by a background pass that executes blocks and refreshes via SSE |
+| **Source & LLM Caching** | MD5-based caching skips re-execution and redundant LLM calls when inputs haven't changed |
+| **Live Watch Mode** | `--watch` polls the source file for changes, rebuilds, and pushes an SSE reload to all connected browsers |
+| **Extra Variables (CLI)** | `-e key=value` pairs override frontmatter vars at runtime (e.g. secrets, tickers, tokens) |
+| **Material Design UI** | Adaptive light/dark theme using CSS `light-dark()` and Material Design tokens |
+| **Single-Port Server** | FastAPI serves the HTML *and* the `/execute` API on one port — no CORS complications |
+
+---
 
 ## Installation
 
-Ensure you have Python installed, then install the required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Or manually:
 
 ```bash
-pip install markdown pymdown-extensions "markdown-exec[ansi]" python-frontmatter pyyaml requests
+pip install "fastapi[standard]" uvicorn markdown pymdown-extensions \
+  "markdown-exec[ansi]" python-frontmatter pyyaml requests jinja2
 ```
+
+---
 
 ## Usage
 
-Run the script by passing your target Markdown file as an argument:
-
+### Basic render (open in browser, click Execute to run blocks)
 ```bash
 python render_md.py my_document.md
 ```
 
-### Writing Your Markdown File
+### Auto-execute all code blocks on load
+```bash
+python render_md.py my_document.md --execute-codeblocks-on-startup
+```
 
-The system expects standard Markdown, but it uses specific YAML patterns to provide context to the LLM and the Python environment.
+### Watch mode (rebuilds and reloads browser on file save)
+```bash
+python render_md.py my_document.md --watch
+```
 
-#### 1. Global YAML Frontmatter
-At the very top of your `.md` file, define your LLM settings and any global variables you want accessible by your code blocks:
+### Inject runtime variables (override frontmatter)
+```bash
+python render_md.py my_document.md \
+  -e token=glsa_abc123 \
+  -e ticker=TSLA
+```
+Multiple `-e` flags are supported. Values take priority over anything defined in the YAML frontmatter.
 
-```markdown
+### Custom port
+```bash
+python render_md.py my_document.md --port 8080
+```
+
+### Debug mode (prints the exact code sent to execution)
+```bash
+python render_md.py my_document.md --debug
+```
+
+### Override LLM timeout
+```bash
+python render_md.py my_document.md --timeout 60
+```
+
+---
+
+## Writing Your Markdown File
+
+### 1. YAML Frontmatter — Global Variables & AI Config
+
+Place a YAML block at the very top of your `.md` file:
+
+```yaml
 ---
 vars:
-  my_global_variable: "Some value"
+  ticker: "GME"
+  myvar: "some value"
   ai:
-    base_url: "https://ai.***REMOVED***"
-    model: "gemma-4-E2B-it-uncensored-Q8_0:latest"
-    timeout: 30s
+    base_url: "https://ai.example.com"
+    model: "llama3"
+    timeout: 120s
     verify_ssl: true
 ---
-
-# My Document
-...
 ```
 
-#### 2. AI-Enabled Code Blocks
-To trigger the AI on a specific code block, start your Python block with a `# Prompt:` comment. You can also define local block-specific variables using a `# vars:` block.
+All keys under `vars` become available as Jinja2 template variables throughout the document and as native variables injected into every code block's execution scope.
 
+### 2. Jinja2 Templating in the Document Body
+
+Use `{{ variable }}` syntax anywhere in headings, paragraphs, or code blocks:
+
+```markdown
+## Price Analysis for {{ ticker }}
+```
+
+If a variable is not defined, it is left as a literal `{{ variable }}` string rather than raising an error.
+
+### 3. AI-Enabled Code Blocks
+
+Add a `# Prompt:` comment at the top of any `python`, `bash`, or `sh` fence:
+
+````markdown
+```bash
+# Prompt: Summarize the moving average trend for {{ ticker }}.
+grafana-query --token {{ token }} -q stocksDashboard.prma -e ticker={{ ticker }}
+```
+````
+
+When executed, the script will:
+1. Interpolate all `{{ }}` variables.
+2. Run the code and capture stdout.
+3. Send the prompt + output to the LLM.
+4. Replace the code block in the HTML with the LLM's Markdown response.
+
+### 4. Block-Level Variable Overrides
+
+Override or add variables for a single block using `# vars:` YAML comments:
+
+````markdown
 ```python
-# Prompt: Analyze the JSON output and tell me the most active user.
+# Prompt: Analyze these results.
 # vars:
-#   users_endpoint: "https://api.example.com/users"
+#   endpoint: "https://api.example.com/v2/data"
 import requests
-
-# 'users_endpoint' and 'my_global_variable' are automatically injected and available here!
-response = requests.get(users_endpoint)
-print(response.json())
+print(requests.get(endpoint).json())
 ```
+````
 
-When you render the file, the script will:
-1. Execute the `requests.get()` call.
-2. Capture the printed JSON output.
-3. Send the Prompt, Code, and JSON Output to the LLM.
-4. Replace the code block entirely with the LLM's Markdown response in the final HTML document!
+Block-level vars are merged on top of global vars, scoped to that block only.
 
-## How it works
-Check out the `CODE_WALKTHROUGH.md` for a detailed breakdown of the internal logic, specifically how `markdown-exec` and `pymdownx.superfences` are hooked to achieve this behavior.
+---
+
+## Server Endpoints
+
+When `render_md.py` is running, the following endpoints are available at `http://localhost:5500` (or your configured `--port`):
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/rendered_md.html` | `GET` | The rendered document |
+| `/execute` | `POST` | Execute a code block by `source_hash`; returns HTML |
+| `/events` | `GET` | SSE stream — browser reloads on `reload` message |
+| `/docs` | `GET` | FastAPI auto-generated Swagger UI for the API |
+
+---
+
+## How It Works
+
+See [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) for a deep-dive into the internal architecture.

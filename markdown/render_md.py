@@ -24,12 +24,22 @@ import hashlib
 import argparse
 import shlex
 import jinja2
+import threading
+import html
+import traceback
+
+import time
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import uvicorn
 
 class PassThroughUndefined(jinja2.Undefined):
     def __str__(self):
         return f"{{{{ {self._undefined_name} }}}}"
-
-from livereload import Server
 
 os.environ["MARKDOWN_EXEC_AUTO"] = "python,bash,sh"
 
@@ -39,6 +49,132 @@ from markdown_exec._internal.formatters.bash import _format_bash, _run_bash
 
 OUTPUT_FILE = os.path.join(tempfile.gettempdir(), 'rendered_md.html')
 llm_cache = {}
+source_cache = {}
+block_registry = {}
+
+def execute_block(source_hash):
+    block = block_registry.get(source_hash)
+    if not block:
+        return "<div class='mui-card-content' style='color: red;'>Block not found in registry.</div>"
+        
+    language = block["language"]
+    final_source = block["final_source"]
+    prompt_line = block["prompt_line"]
+    clean_source_str = block["clean_source"]
+    merged_vars = block["merged_vars"]
+    cli_timeout = block["cli_timeout"]
+    options = block["options"]
+    md = block["md"]
+    debug = block["debug"]
+
+    if debug:
+        print("\n" + "="*40)
+        print(f"DEBUG: Executing {language} code block")
+        print("="*40)
+        print(final_source)
+        print("="*40 + "\n")
+
+    try:
+        if language == "python":
+            raw_stdout = _run_python(code=final_source, session=options.get("session"), id=options.get("id"))
+        elif language in ("bash", "sh"):
+            raw_stdout = _run_bash(code=final_source, session=options.get("session"), id=options.get("id"))
+        else:
+            raw_stdout = ""
+    except Exception as e:
+        raw_stdout = f"Execution Error: {e}"
+        
+    if prompt_line:
+        payload = prompt_line + raw_stdout
+        payload_hash = hashlib.md5(payload.encode('utf-8')).hexdigest()
+        
+        if payload_hash in llm_cache:
+            llm_response = llm_cache[payload_hash]
+        else:
+            llm_response = ask_llm(
+                prompt=prompt_line,
+                code=clean_source_str,
+                raw_stdout=raw_stdout,
+                ai_config=merged_vars.get("ai", {}),
+                cli_timeout=cli_timeout
+            )
+            llm_cache[payload_hash] = llm_response
+            
+        final_html = markdown.markdown(llm_response, extensions=["fenced_code", "tables"])
+    else:
+        if language == "python":
+            final_html = _format_python(code=final_source, md=md, **options)
+        elif language in ("bash", "sh"):
+            final_html = _format_bash(code=final_source, md=md, **options)
+        else:
+            final_html = ""
+            
+    source_cache[source_hash] = final_html
+    return final_html
+
+# ---------------------------------------------------------------------------
+# FastAPI unified server – serves /execute, /events (SSE), and static HTML
+# all on one port, eliminating any CORS concerns.
+# ---------------------------------------------------------------------------
+import asyncio
+_api_app = FastAPI(title="render_md")
+_sse_queues: list = []
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+class ExecuteRequest(BaseModel):
+    source_hash: str
+
+@_api_app.post("/execute", response_class=HTMLResponse)
+def api_execute(req: ExecuteRequest):
+    if req.source_hash not in block_registry:
+        raise HTTPException(status_code=404, detail="Block not found")
+    try:
+        return HTMLResponse(content=execute_block(req.source_hash))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@_api_app.get("/events")
+async def sse_events():
+    """Server-Sent Events stream used by --watch mode for live page reloads."""
+    q: asyncio.Queue = asyncio.Queue()
+    _sse_queues.append(q)
+    async def stream():
+        try:
+            yield "data: connected\n\n"
+            while True:
+                msg = await q.get()
+                yield f"data: {msg}\n\n"
+        finally:
+            _sse_queues.remove(q)
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+@_api_app.on_event("startup")
+async def _capture_event_loop():
+    global _event_loop
+    _event_loop = asyncio.get_event_loop()
+
+def trigger_reload():
+    """Signal all connected SSE clients to reload the page (called from a background thread)."""
+    if _event_loop and _sse_queues:
+        for q in list(_sse_queues):
+            asyncio.run_coroutine_threadsafe(q.put("reload"), _event_loop)
+
+def start_server(port: int = 5500):
+    """Start the unified FastAPI server (static files + API) in a background daemon thread."""
+    # StaticFiles must be mounted AFTER all routes are defined
+    _api_app.mount("/", StaticFiles(directory=os.path.dirname(OUTPUT_FILE), html=True), name="static")
+    def _run():
+        uvicorn.run(_api_app, host="0.0.0.0", port=port, log_level="warning")
+    threading.Thread(target=_run, daemon=True).start()
+    # Small grace period so the server is ready before the browser opens
+    time.sleep(0.8)
+    print(f"Server running at http://localhost:{port}")
+
 
 def ask_llm(prompt, code, raw_stdout, ai_config, cli_timeout=None):
     """Sends the prompt, code, and stdout to the configured LLM API (Ollama by default)."""
@@ -93,7 +229,7 @@ Please respond using Markdown. Only output the final markdown response.
         return f"**Error from LLM:** `{e}`"
 
 
-def build(md_file_path, cli_timeout=None, debug=False):
+def build(md_file_path, cli_timeout=None, debug=False, is_background=False, execute_on_startup=False, extra_vars=None):
     """
     Reads a Markdown file, processes it with custom extensions, and renders it as HTML.
     
@@ -101,8 +237,15 @@ def build(md_file_path, cli_timeout=None, debug=False):
         md_file_path (str): The absolute or relative path to the Markdown file.
         cli_timeout (int, optional): Override LLM API timeout.
         debug (bool): If True, prints extra debugging information like the executed code.
+        is_background (bool): If True, it performs the slow execution pass.
+        execute_on_startup (bool): If False, codeblocks require a manual button click to run.
+        extra_vars (dict, optional): Extra variables passed via -e key=value on the CLI.
+                                     These take priority over frontmatter vars.
     """
-    print(f"Rebuilding {md_file_path}...")
+    if is_background:
+        print(f"Running background processing for {md_file_path}...")
+    else:
+        print(f"Rebuilding {md_file_path} (fast pass)...")
     
     # Clear the shared session so variables from the previous build don't leak into the new one
     _sessions_globals.pop("ai-shared-session", None)
@@ -111,6 +254,13 @@ def build(md_file_path, cli_timeout=None, debug=False):
         document = frontmatter.load(f)
 
     global_vars = document.metadata.get("vars", {})
+    
+    # CLI extra_vars override frontmatter vars
+    if extra_vars:
+        global_vars.update(extra_vars)
+        if debug:
+            print(f"DEBUG: Merged extra_vars into global_vars: {extra_vars}")
+
     markdown_text = document.content
 
     # Interpolate global variables into the markdown text
@@ -182,54 +332,59 @@ def build(md_file_path, cli_timeout=None, debug=False):
             
         final_source = injected_code + "\n".join(clean_source)
         
-        if debug:
+        if debug and not is_background:
             print("\n" + "="*40)
             print(f"DEBUG: Executing {language} code block")
             print("="*40)
             print(final_source)
             print("="*40 + "\n")
             
-        # We need raw stdout for the LLM!
-        # _run_python/_run_bash gives us the raw stdout text, while _format_python/_format_bash returns HTML.
-        try:
-            if language == "python":
-                raw_stdout = _run_python(code=final_source, session=options.get("session"), id=options.get("id"))
-            elif language in ("bash", "sh"):
-                raw_stdout = _run_bash(code=final_source, session=options.get("session"), id=options.get("id"))
-            else:
-                raw_stdout = ""
-        except Exception as e:
-            raw_stdout = f"Execution Error: {e}"
+        source_hash = hashlib.md5((final_source + str(prompt_line)).encode('utf-8')).hexdigest()
         
-        if prompt_line:
-            clean_source_str = "\n".join(clean_source)
-            # We cache the LLM response because it's slow, whereas local python execution is fast.
-            # We hash the prompt and the stdout so that changes to the Python code don't invalidate the cache if the output is identical
-            payload = prompt_line + raw_stdout
-            payload_hash = hashlib.md5(payload.encode('utf-8')).hexdigest()
+        block_registry[source_hash] = {
+            "source": source,
+            "language": language,
+            "final_source": final_source,
+            "prompt_line": prompt_line,
+            "clean_source": clean_source_str,
+            "merged_vars": merged_vars,
+            "cli_timeout": cli_timeout,
+            "options": options,
+            "md": md,
+            "debug": debug
+        }
+        
+        if source_hash in source_cache:
+            return source_cache[source_hash]
             
-            if payload_hash in llm_cache:
-                llm_response = llm_cache[payload_hash]
-            else:
-                # Pass the merged_vars (which contains ai settings like model/url) to the LLM
-                llm_response = ask_llm(
-                    prompt=prompt_line,
-                    code=clean_source_str,
-                    raw_stdout=raw_stdout,
-                    ai_config=merged_vars.get("ai", {}),
-                    cli_timeout=cli_timeout
-                )
-                llm_cache[payload_hash] = llm_response
-                
-            # Render the LLM's response into HTML instead of the code block
-            return markdown.markdown(llm_response, extensions=["fenced_code", "tables"])
-        
-        # Fallback: Just return normal HTML execution output using markdown-exec
-        if language == "python":
-            return _format_python(code=final_source, md=md, **options)
-        elif language in ("bash", "sh"):
-            return _format_bash(code=final_source, md=md, **options)
-        return ""
+        if not execute_on_startup:
+            code_html = f"<pre><code class=\"language-{language}\">{html.escape(source)}</code></pre>"
+            return f"""
+            <div class="mui-card" id="block-{source_hash}">
+                <div class="mui-card-content">
+                    <span class="mui-card-title">Pending Execution</span>
+                    {code_html}
+                </div>
+                <div class="mui-card-actions">
+                    <button class="mui-btn mui-btn-primary" onclick="executeBlock('{source_hash}')">
+                        EXECUTE
+                    </button>
+                </div>
+            </div>
+            """
+            
+        if not is_background:
+            md._needs_background_pass = True
+            return f"""
+            <div class="mui-card loading" id="block-{source_hash}">
+                <div class="mui-card-content" style="display: flex; align-items: center;">
+                    <div class="mui-spinner"></div>
+                    <strong style="margin-left: 15px;">Executing code and generating insights...</strong>
+                </div>
+            </div>
+            """
+            
+        return execute_block(source_hash)
 
     # Initialize markdown with our custom formatter
     md = markdown.Markdown(
@@ -260,6 +415,8 @@ def build(md_file_path, cli_timeout=None, debug=False):
         }
     )
 
+    md._needs_background_pass = False
+
     print("Converting Markdown to HTML and executing code blocks...")
     html_body = md.convert(markdown_text)
 
@@ -270,22 +427,159 @@ def build(md_file_path, cli_timeout=None, debug=False):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="color-scheme" content="light dark"> 
         <title>AI Executable Markdown</title>
+        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
         <style>
+            :root {{
+                /* Material Design 2/3 Color Tokens */
+                --primary: #6200ee;
+                --on-primary: #ffffff;
+                
+                /* light-dark(light_value, dark_value) handles the switch automatically */
+                --background: light-dark(#fafafa, #121212);
+                --surface: light-dark(#ffffff, #1e1e1e);
+                --on-surface: light-dark(#000000, #e1e1e1);
+                --elevation-1: light-dark(rgba(0,0,0,0.05), rgba(255,255,255,0.05));
+                --elevation-card: light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.3));
+                --border-color: light-dark(rgba(0,0,0,0.12), rgba(255,255,255,0.12));
+            }}
+
+            /* Fallback for older browsers without light-dark() support */
+            @media (prefers-color-scheme: dark) {{
+                :root {{
+                    --background: #121212;
+                    --surface: #1e1e1e;
+                    --on-surface: #e1e1e1;
+                    --elevation-1: rgba(255,255,255,0.05);
+                    --elevation-card: rgba(0,0,0,0.3);
+                    --border-color: rgba(255,255,255,0.12);
+                }}
+            }}
+
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
             body {{
+                font-family: 'Roboto', system-ui, sans-serif;
                 box-sizing: border-box;
                 min-width: 200px;
                 max-width: 980px;
                 margin: 0 auto;
                 padding: 45px;
+                background-color: var(--background);
+                color: var(--on-surface);
+                transition: background-color 0.3s ease;
+            }}
+            .markdown-body {{
+                background: var(--surface);
+                color: var(--on-surface);
+                padding: 45px;
+                border-radius: 4px;
+                box-shadow: 0 1px 3px var(--elevation-card), 0 1px 2px var(--elevation-card);
+            }}
+            .mui-card {{
+                background-color: var(--surface);
+                border-radius: 12px;
+                box-shadow: 0 4px 6px var(--elevation-card);
+                margin: 20px 0;
+                overflow: hidden;
+            }}
+            .mui-card-content {{
+                padding: 16px;
+            }}
+            .mui-card-title {{
+                font-size: 1.25rem;
+                font-weight: 500;
+                margin-bottom: 12px;
+                display: block;
+                color: var(--primary);
+            }}
+            .mui-card-actions {{
+                padding: 8px;
+                border-top: 1px solid var(--border-color);
+                display: flex;
+                justify-content: flex-end;
+            }}
+            .mui-btn {{
+                background-color: var(--primary);
+                color: var(--on-primary);
+                padding: 0.75rem 1.5rem;
+                font-size: 0.875rem;
+                min-width: 64px;
+                box-sizing: border-box;
+                font-weight: 500;
+                border-radius: 8px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                cursor: pointer;
+                border: none;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                transition: filter 0.3s ease, box-shadow 0.3s ease;
+            }}
+            .mui-btn-primary:hover {{
+                filter: brightness(1.1);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            }}
+            .mui-spinner {{
+                border: 3px solid rgba(98, 0, 238, 0.2);
+                border-top: 3px solid var(--primary);
+                border-radius: 50%;
+                width: 24px;
+                height: 24px;
+                animation: spin 1s linear infinite;
+            }}
+            @media (max-width: 767px) {{
+                .markdown-body {{
+                    padding: 15px;
+                }}
             }}
             .prompt-code-block {{
-                border-left: 4px solid #0366d6;
+                border-left: 4px solid var(--primary);
                 padding-left: 10px;
                 display: block;
             }}
         </style>
+        <script>
+        async function executeBlock(sourceHash) {{
+            const blockEl = document.getElementById(`block-${{sourceHash}}`);
+            if (!blockEl) return;
+            
+            blockEl.innerHTML = `
+                <div class="mui-card-content" style="display: flex; align-items: center;">
+                    <div class="mui-spinner"></div>
+                    <strong style="margin-left: 15px;">Executing code and generating insights...</strong>
+                </div>
+            `;
+            
+            try {{
+                const response = await fetch('/execute', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ source_hash: sourceHash }})
+                }});
+                
+                if (response.ok) {{
+                    const html = await response.text();
+                    blockEl.outerHTML = html;
+                }} else {{
+                    blockEl.innerHTML = `<div class="mui-card-content" style="color: red;">Execution failed.</div>`;
+                }}
+            }} catch (e) {{
+                blockEl.innerHTML = `<div class="mui-card-content" style="color: red;">Error: ${{e.message}}. Is the API server running?</div>`;
+            }}
+        }}
+        </script>
+        <script>
+        // SSE-based live-reload (active when running with --watch)
+        const _evtSrc = new EventSource('/events');
+        _evtSrc.onmessage = (e) => {{ if (e.data === 'reload') window.location.reload(); }};
+        </script>
     </head>
     <body class="markdown-body">
         {html_body}
@@ -297,25 +591,40 @@ def build(md_file_path, cli_timeout=None, debug=False):
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html_document)
     print(f"Build complete. Saved to {OUTPUT_FILE}")
+    
+    if not is_background and getattr(md, '_needs_background_pass', False):
+        print("Starting background execution pass...")
+        threading.Thread(target=build, args=(md_file_path, cli_timeout, debug, True, execute_on_startup, extra_vars), daemon=True).start()
 
-def serve_live(target_path, cli_timeout=None, debug=False):
+def serve_live(target_path, cli_timeout=None, debug=False, execute_on_startup=False, extra_vars=None, port=5500):
     """
-    Starts a Live-Reload server watching the target Markdown file.
+    Starts the unified server, performs an initial build, then watches the
+    source Markdown file for changes and triggers a browser reload via SSE.
     """
-    # Perform initial build
-    build(target_path, cli_timeout, debug)
-    
-    server = Server()
-    # Watch the markdown file and rebuild when it changes
-    server.watch(target_path, lambda: build(target_path, cli_timeout, debug))
-    
-    # Auto-open browser
-    webbrowser.open("http://localhost:5500/rendered_md.html")
-    
-    print(f"Starting Live-Reload server at http://localhost:5500 ...")
-    # Serve the temporary directory where OUTPUT_FILE resides
-    # livereload will inject its refresh script automatically!
-    server.serve(root=os.path.dirname(OUTPUT_FILE), port=5500)
+    start_server(port)
+    build(target_path, cli_timeout, debug, execute_on_startup=execute_on_startup, extra_vars=extra_vars)
+
+    def _watch():
+        last_mtime = os.path.getmtime(target_path)
+        while True:
+            time.sleep(1)
+            try:
+                mtime = os.path.getmtime(target_path)
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    build(target_path, cli_timeout, debug, execute_on_startup=execute_on_startup, extra_vars=extra_vars)
+                    trigger_reload()
+            except Exception as e:
+                print(f"Watch error: {e}", file=sys.stderr)
+
+    threading.Thread(target=_watch, daemon=True).start()
+    html_url = f"http://localhost:{port}/rendered_md.html"
+    print(f"Watching {target_path} — {html_url} (Ctrl+C to quit)")
+    webbrowser.open(html_url)
+    try:
+        while True: time.sleep(1)
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render Markdown with AI Insights and Live-Reload.")
@@ -323,17 +632,38 @@ if __name__ == "__main__":
     parser.add_argument("--watch", "-w", action="store_true", help="Enable live-reload server to automatically rebuild on file changes.")
     parser.add_argument("--timeout", type=int, help="Override LLM API timeout in seconds.")
     parser.add_argument("--debug", "-d", action="store_true", help="Print debug information like the executed code blocks.")
+    parser.add_argument("--execute-codeblocks-on-startup", action="store_true", help="Execute codeblocks automatically on startup")
+    parser.add_argument("--extra-vars", "-e", action="append", metavar="KEY=VALUE",
+                        help="Extra variables to inject (overrides frontmatter), e.g. -e token=abc -e ticker=GME",
+                        default=[])
+    parser.add_argument("--port", type=int, default=5500, help="Port for the HTTP server (default: 5500).")
     
     args = parser.parse_args()
-    
+
+    # Parse -e key=value pairs into a dict
+    extra_vars = {}
+    for item in args.extra_vars:
+        if "=" in item:
+            k, v = item.split("=", 1)
+            extra_vars[k.strip()] = v.strip()
+        else:
+            print(f"Warning: ignoring malformed --extra-vars entry '{item}' (expected key=value)", file=sys.stderr)
+
     target_path = os.path.abspath(args.file)
     if not os.path.exists(target_path):
         print(f"Error: Could not find file {target_path}", file=sys.stderr)
         sys.exit(1)
         
     if args.watch:
-        serve_live(target_path, args.timeout, args.debug)
+        serve_live(target_path, args.timeout, args.debug, args.execute_codeblocks_on_startup,
+                   extra_vars=extra_vars, port=args.port)
     else:
-        build(target_path, args.timeout, args.debug)
-        print(f"Success! Opening {OUTPUT_FILE} in browser...")
-        webbrowser.open(f"file://{OUTPUT_FILE}")
+        start_server(args.port)
+        build(target_path, args.timeout, args.debug, execute_on_startup=args.execute_codeblocks_on_startup, extra_vars=extra_vars)
+        html_url = f"http://localhost:{args.port}/rendered_md.html"
+        print(f"Serving at {html_url} (Ctrl+C to quit)")
+        webbrowser.open(html_url)
+        try:
+            while True: time.sleep(1)
+        except KeyboardInterrupt:
+            pass
