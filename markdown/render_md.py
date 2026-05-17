@@ -283,11 +283,21 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
         
         local_vars_yaml = ""
         prompt_line = None
+        prompt_lines = []
         clean_source = []
         
         in_vars = False
+        in_prompt = False
         for line in source.split("\n"):
-            if line.startswith("# Prompt:"):
+            if line.strip() == "# BeginPrompt":
+                in_prompt = True
+            elif line.strip() == "# EndPrompt":
+                in_prompt = False
+                prompt_line = "\n".join(prompt_lines)
+            elif in_prompt:
+                # Strip leading '# ' from prompt content lines
+                prompt_lines.append(line.lstrip("# "))
+            elif line.startswith("# Prompt:"):
                 prompt_line = line.replace("# Prompt:", "").strip()
             elif line.startswith("# vars:"):
                 in_vars = True
@@ -362,7 +372,6 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
             return f"""
             <div class="mui-card" id="block-{source_hash}">
                 <div class="mui-card-content">
-                    <span class="mui-card-title">Pending Execution</span>
                     {code_html}
                 </div>
                 <div class="mui-card-actions">

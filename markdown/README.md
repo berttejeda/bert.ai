@@ -119,6 +119,18 @@ grafana-query --token {{ token }} -q stocksDashboard.prma -e ticker={{ ticker }}
 ```
 ````
 
+For multiline prompts, wrap the prompt in `# BeginPrompt` and `# EndPrompt` markers:
+
+````markdown
+```bash
+# BeginPrompt
+# Review the {{ ticker }} price moving averages and make a statement about the price.
+# Is this a good time to buy or sell?
+# EndPrompt
+grafana-query --token {{ token }} -q stocksDashboard.prma -e ticker={{ ticker }}
+```
+````
+
 When executed, the script will:
 1. Interpolate all `{{ }}` variables.
 2. Run the code and capture stdout.
