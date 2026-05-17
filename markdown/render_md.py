@@ -22,13 +22,20 @@ import markdown
 import requests
 import hashlib
 import argparse
+import shlex
+import jinja2
+
+class PassThroughUndefined(jinja2.Undefined):
+    def __str__(self):
+        return f"{{{{ {self._undefined_name} }}}}"
 
 from livereload import Server
 
-os.environ["MARKDOWN_EXEC_AUTO"] = "python"
+os.environ["MARKDOWN_EXEC_AUTO"] = "python,bash,sh"
 
 from markdown_exec._internal.main import validator
 from markdown_exec._internal.formatters.python import _format_python, _run_python, _sessions_globals
+from markdown_exec._internal.formatters.bash import _format_bash, _run_bash
 
 OUTPUT_FILE = os.path.join(tempfile.gettempdir(), 'rendered_md.html')
 llm_cache = {}
@@ -86,12 +93,14 @@ Please respond using Markdown. Only output the final markdown response.
         return f"**Error from LLM:** `{e}`"
 
 
-def build(md_file_path, cli_timeout=None):
+def build(md_file_path, cli_timeout=None, debug=False):
     """
     Reads a Markdown file, processes it with custom extensions, and renders it as HTML.
     
     Args:
         md_file_path (str): The absolute or relative path to the Markdown file.
+        cli_timeout (int, optional): Override LLM API timeout.
+        debug (bool): If True, prints extra debugging information like the executed code.
     """
     print(f"Rebuilding {md_file_path}...")
     
@@ -103,6 +112,10 @@ def build(md_file_path, cli_timeout=None):
 
     global_vars = document.metadata.get("vars", {})
     markdown_text = document.content
+
+    # Interpolate global variables into the markdown text
+    env = jinja2.Environment(undefined=PassThroughUndefined)
+    markdown_text = env.from_string(markdown_text).render(**global_vars)
 
     def ai_formatter(source, language, css_class, options, md, **kwargs):
         """
@@ -148,18 +161,43 @@ def build(md_file_path, cli_timeout=None):
             except Exception as e:
                 print(f"Warning: Failed to parse local vars: {e}", file=sys.stderr)
 
-        # Inject variables as Python code at the top of the executed script
+        # Interpolate variables into prompt and code
+        env = jinja2.Environment(undefined=PassThroughUndefined)
+        if prompt_line:
+            prompt_line = env.from_string(prompt_line).render(**merged_vars)
+            
+        clean_source_str = "\n".join(clean_source)
+        clean_source_str = env.from_string(clean_source_str).render(**merged_vars)
+        clean_source = clean_source_str.split("\n")
+
+        # Inject variables as Python code or bash exports at the top of the executed script
         injected_code = ""
         for k, v in merged_vars.items():
-            val_json = json.dumps(v)
-            injected_code += f"{k} = __import__('json').loads('{val_json}')\n"
+            if language == "python":
+                val_json = json.dumps(v)
+                injected_code += f"{k} = __import__('json').loads('{val_json}')\n"
+            elif language in ("bash", "sh"):
+                val_sh = shlex.quote(str(v))
+                injected_code += f"export {k}={val_sh}\n"
             
         final_source = injected_code + "\n".join(clean_source)
         
+        if debug:
+            print("\n" + "="*40)
+            print(f"DEBUG: Executing {language} code block")
+            print("="*40)
+            print(final_source)
+            print("="*40 + "\n")
+            
         # We need raw stdout for the LLM!
-        # _run_python gives us the raw stdout text, while _format_python returns HTML.
+        # _run_python/_run_bash gives us the raw stdout text, while _format_python/_format_bash returns HTML.
         try:
-            raw_stdout = _run_python(code=final_source, session=options["session"], id=options.get("id"))
+            if language == "python":
+                raw_stdout = _run_python(code=final_source, session=options.get("session"), id=options.get("id"))
+            elif language in ("bash", "sh"):
+                raw_stdout = _run_bash(code=final_source, session=options.get("session"), id=options.get("id"))
+            else:
+                raw_stdout = ""
         except Exception as e:
             raw_stdout = f"Execution Error: {e}"
         
@@ -187,7 +225,11 @@ def build(md_file_path, cli_timeout=None):
             return markdown.markdown(llm_response, extensions=["fenced_code", "tables"])
         
         # Fallback: Just return normal HTML execution output using markdown-exec
-        return _format_python(code=final_source, md=md, **options)
+        if language == "python":
+            return _format_python(code=final_source, md=md, **options)
+        elif language in ("bash", "sh"):
+            return _format_bash(code=final_source, md=md, **options)
+        return ""
 
     # Initialize markdown with our custom formatter
     md = markdown.Markdown(
@@ -198,6 +240,18 @@ def build(md_file_path, cli_timeout=None):
                     {
                         "name": "python",
                         "class": "python",
+                        "validator": validator,
+                        "format": ai_formatter,
+                    },
+                    {
+                        "name": "bash",
+                        "class": "bash",
+                        "validator": validator,
+                        "format": ai_formatter,
+                    },
+                    {
+                        "name": "sh",
+                        "class": "sh",
                         "validator": validator,
                         "format": ai_formatter,
                     }
@@ -244,16 +298,16 @@ def build(md_file_path, cli_timeout=None):
         f.write(html_document)
     print(f"Build complete. Saved to {OUTPUT_FILE}")
 
-def serve_live(target_path, cli_timeout=None):
+def serve_live(target_path, cli_timeout=None, debug=False):
     """
     Starts a Live-Reload server watching the target Markdown file.
     """
     # Perform initial build
-    build(target_path, cli_timeout)
+    build(target_path, cli_timeout, debug)
     
     server = Server()
     # Watch the markdown file and rebuild when it changes
-    server.watch(target_path, lambda: build(target_path, cli_timeout))
+    server.watch(target_path, lambda: build(target_path, cli_timeout, debug))
     
     # Auto-open browser
     webbrowser.open("http://localhost:5500/rendered_md.html")
@@ -268,6 +322,7 @@ if __name__ == "__main__":
     parser.add_argument("file", nargs="?", default="hello-world-python.md", help="The Markdown file to render (default: hello-world-python.md).")
     parser.add_argument("--watch", "-w", action="store_true", help="Enable live-reload server to automatically rebuild on file changes.")
     parser.add_argument("--timeout", type=int, help="Override LLM API timeout in seconds.")
+    parser.add_argument("--debug", "-d", action="store_true", help="Print debug information like the executed code blocks.")
     
     args = parser.parse_args()
     
@@ -277,8 +332,8 @@ if __name__ == "__main__":
         sys.exit(1)
         
     if args.watch:
-        serve_live(target_path, args.timeout)
+        serve_live(target_path, args.timeout, args.debug)
     else:
-        build(target_path, args.timeout)
+        build(target_path, args.timeout, args.debug)
         print(f"Success! Opening {OUTPUT_FILE} in browser...")
         webbrowser.open(f"file://{OUTPUT_FILE}")
