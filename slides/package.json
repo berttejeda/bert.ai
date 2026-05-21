@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "slidev --open",
-    "build": "slidev build --base hands-on-lab/",
+    "build": "slidev build --base bert.ai/hands-on-lab/",
     "export": "slidev export"
   },
   "dependencies": {
