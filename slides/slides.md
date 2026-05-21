@@ -1361,6 +1361,478 @@ generic SOP AND ACME's specific backup config."
 </div>
 
 ---
+
+# Lab 6a: Local AI Agents — Overview & Hardware
+
+<template>
+  <div>
+    <v-tour name="localOverviewTour" :steps="overviewSteps"></v-tour>
+    <button @click="startOverviewTour" class="px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 transition text-sm mb-4">
+      🎯 Start Guided Tour
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { ref, getCurrentInstance } from 'vue'
+
+const overviewSteps = ref([
+  { target: '#local-why', content: 'Local agents give you full privacy and zero API costs — ideal for sensitive data and autonomous operation.' },
+  { target: '#local-gpu', content: 'Model size determines GPU requirements. This table helps you pick the right model for your hardware.' },
+  { target: '#local-arch', content: 'The full local stack: OpenClaw handles multi-channel messaging, Hermes executes autonomously, Ollama runs inference.' }
+])
+
+const { proxy } = getCurrentInstance()
+const startOverviewTour = () => { proxy.$tours['localOverviewTour'].start() }
+</script>
+
+<div class="grid grid-cols-2 gap-4 text-xs">
+
+<div>
+
+<div id="local-why">
+
+### 🎯 Why Local AI Agents?
+- **Data privacy** — nothing leaves your machine
+- **Zero API costs** — run inference on your own GPU/CPU
+- **Offline capable** — works without internet
+- **Customizable** — uncensored/fine-tuned models, custom tools
+- **Multi-channel** — WhatsApp, Telegram, Slack, Discord, CLI
+- **Full autonomy** — agents can execute shell commands, write files
+
+</div>
+
+<div id="local-gpu">
+
+### 🖥️ GPU & Hardware Requirements
+
+| Model | Params | VRAM Required | Speed | Quality |
+|-------|--------|---------------|-------|---------|
+| Qwen3 0.6B | 0.6B | 1 GB | ⚡⚡⚡ | Basic |
+| Gemma3 4B | 4B | 4 GB | ⚡⚡⚡ | Good |
+| Qwen3 8B | 8B | 6 GB | ⚡⚡ | Strong |
+| Gemma3 12B | 12B | 8 GB | ⚡⚡ | Very strong |
+| Llama 4 Scout | 17B (MoE) | 12 GB | ⚡ | Excellent |
+| Qwen3 32B | 32B | 20 GB | ⚡ | Near-frontier |
+| Llama 4 Maverick | 109B (MoE) | 48 GB+ | 🐢 | Frontier-class |
+
+**Minimum viable setup:**
+- **CPU-only** (Apple Silicon M1+): 8B models run at ~15 tok/s on 16GB RAM
+- **Entry GPU** (RTX 3060 12GB / M1 Pro 16GB): 8B–12B at good speed
+- **Mid GPU** (RTX 4090 24GB / M2 Ultra 64GB): 32B comfortably
+- **Multi-GPU** (2× 4090 / A100 80GB): 70B+ models
+
+**Quantization** matters: Q4_K_M uses ~50% less VRAM vs FP16 with minimal quality loss.
+
+</div>
+
+</div>
+
+<div>
+
+<div id="local-arch">
+
+### 🏗️ Full Local Agent Architecture
+
+```
+┌──────────────────────────────────────┐
+│  You (WhatsApp / Telegram / Slack /  │
+│       Discord / CLI / Web UI)        │
+└──────────────────┬───────────────────┘
+                   │ message
+┌──────────────────▼───────────────────┐
+│  🦞 OpenClaw Gateway (port 18789)    │
+│  Multi-channel inbox & routing       │
+│  Session management & memory         │
+│  Tool orchestration                  │
+└──────────────────┬───────────────────┘
+                   │ task delegation
+┌──────────────────▼───────────────────┐
+│  🧠 Hermes Agent (autonomous exec)   │
+│  Goal decomposition & planning       │
+│  Tool use: shell, fs, python, web    │
+│  Self-verification & retry           │
+└──────────────────┬───────────────────┘
+                   │ inference
+┌──────────────────▼───────────────────┐
+│  🦙 Ollama (port 11434)              │
+│  Model: gemma3:12b / qwen3:8b        │
+│  GPU-accelerated inference           │
+└──────────────────────────────────────┘
+```
+
+### 📋 Prerequisites Checklist
+- [ ] Docker & Docker Compose installed
+- [ ] Ollama installed (`brew install ollama` or [ollama.com](https://ollama.com))
+- [ ] At least 16 GB RAM (32 GB recommended)
+- [ ] GPU with 8+ GB VRAM (or Apple Silicon M1+)
+- [ ] Python 3.11+ with pip/uv
+- [ ] Ollama running: `ollama serve`
+
+</div>
+
+</div>
+
+</div>
+
+---
+
+# Lab 6b: Deploy OpenClaw — Personal AI Assistant
+
+<template>
+  <div>
+    <v-tour name="openclawTour" :steps="clawSteps"></v-tour>
+    <button @click="startClawTour" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition text-sm mb-4">
+      🦞 Start Guided Tour
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { ref, getCurrentInstance } from 'vue'
+
+const clawSteps = ref([
+  { target: '#claw-what', content: 'OpenClaw is your 24/7 personal AI assistant accessible from any messaging platform — all running on your hardware.' },
+  { target: '#claw-setup', content: 'The setup uses Docker Compose with an external network so OpenClaw can communicate with Ollama and other services.' },
+  { target: '#claw-config', content: 'The config file controls which model to use, which channels to enable, and agent behavior settings.' },
+  { target: '#claw-channels', content: 'Connect your preferred messaging apps. Each channel is a plugin — enable only what you need.' },
+  { target: '#claw-verify', content: 'After deployment, verify the gateway is healthy and test with the built-in CLI channel.' }
+])
+
+const { proxy } = getCurrentInstance()
+const startClawTour = () => { proxy.$tours['openclawTour'].start() }
+</script>
+
+<div class="grid grid-cols-2 gap-4 text-xs">
+
+<div>
+
+<div id="claw-what">
+
+### 🦞 What is OpenClaw?
+Open-source personal AI assistant — one gateway serves multiple channels (WhatsApp, Telegram, Slack, Discord, CLI). Your data stays on your machine.
+
+</div>
+
+<div id="claw-setup">
+
+### 📦 Step 1: Project Setup
+```bash
+# Create project structure
+mkdir -p openclaw/{config,workspace,tmp}
+cd openclaw
+
+# Create the Docker network (shared with Ollama)
+docker network create ai_net
+
+# Pull your preferred model
+ollama pull gemma3:12b
+```
+
+### 🐳 Step 2: Docker Compose
+```yaml
+# docker-compose.yml
+networks:
+  ai_net:
+    external: true
+
+services:
+  openclaw-gateway:
+    image: openclaw/agent:latest
+    networks: [ai_net]
+    env_file: ".env"
+    volumes:
+      - ./tmp:/tmp
+      - ./config:/home/node/.openclaw
+      - ./workspace:/home/node/.openclaw/workspace
+    ports:
+      - "18789:18789"   # Gateway API
+      - "18790:18790"   # Bridge (channel connections)
+    init: true
+    restart: unless-stopped
+    command:
+      - "node"
+      - "dist/index.js"
+      - "gateway"
+      - "--bind"
+      - "lan"
+      - "--port"
+      - "18789"
+      - "--allow-unconfigured"
+
+  openclaw-cli:
+    profiles: [cli]
+    image: openclaw/agent:latest
+    networks: [ai_net]
+    env_file: ".env"
+    volumes:
+      - ./config:/home/node/.openclaw
+      - ./workspace:/home/node/.openclaw/workspace
+    stdin_open: true
+    tty: true
+    init: true
+    entrypoint: ["node", "dist/index.js"]
+```
+
+</div>
+
+</div>
+
+<div>
+
+<div id="claw-config">
+
+### ⚙️ Step 3: Configuration
+```bash
+# .env file
+OPENCLAW_IMAGE=openclaw/agent:latest
+OPENCLAW_CONFIG_DIR=./config
+OPENCLAW_WORKSPACE_DIR=./workspace
+OPENCLAW_GATEWAY_PORT=18789
+OPENCLAW_BRIDGE_PORT=18790
+OPENCLAW_GATEWAY_BIND=lan
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+```json
+// config/openclaw.json
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "ollama/gemma3:12b"
+      }
+    }
+  },
+  "gateway": {
+    "channels": ["cli", "telegram"],
+    "memory": {
+      "type": "local",
+      "maxHistory": 100
+    }
+  }
+}
+```
+
+</div>
+
+<div id="claw-channels">
+
+### 📱 Step 4: Channel Plugins
+| Channel | Setup | Notes |
+|---------|-------|-------|
+| **CLI** | Built-in | `docker compose --profile cli run openclaw-cli` |
+| **Telegram** | Set `TELEGRAM_BOT_TOKEN` in .env | Create bot via @BotFather |
+| **WhatsApp** | Requires bridge setup | Via WhatsApp Business API |
+| **Slack** | Set Slack app credentials | Create Slack app at api.slack.com |
+| **Discord** | Set `DISCORD_BOT_TOKEN` | Create bot at discord.dev |
+
+</div>
+
+<div id="claw-verify">
+
+### ✅ Step 5: Launch & Verify
+```bash
+# Start the gateway
+docker compose up -d
+
+# Check health
+curl http://localhost:18789/health
+
+# Test via CLI channel
+docker compose --profile cli run openclaw-cli
+
+# View logs
+docker compose logs -f openclaw-gateway
+
+# Run doctor (diagnose issues)
+docker compose --profile cli run openclaw-cli doctor
+```
+
+</div>
+
+</div>
+
+</div>
+
+---
+
+# Lab 6c: Deploy Hermes Agent — Autonomous AI Executor
+
+<template>
+  <div>
+    <v-tour name="hermesTour" :steps="hermesSteps"></v-tour>
+    <button @click="startHermesTour" class="px-4 py-2 bg-violet-500 text-white rounded hover:bg-violet-600 transition text-sm mb-4">
+      🧠 Start Guided Tour
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { ref, getCurrentInstance } from 'vue'
+
+const hermesSteps = ref([
+  { target: '#hermes-what', content: 'Hermes is a fully autonomous agent — give it a goal and it plans, executes, and verifies without hand-holding.' },
+  { target: '#hermes-install', content: 'Install Hermes and pull a compatible model. Qwen3 8B is the sweet spot for speed vs quality on consumer GPUs.' },
+  { target: '#hermes-config', content: 'The config controls model, tools, safety limits, and execution boundaries. Start conservative with max_iterations.' },
+  { target: '#hermes-tools', content: 'Hermes ships with built-in tools but you can add custom ones — including MCP server connections.' },
+  { target: '#hermes-examples', content: 'These real-world examples show the autonomous planning loop in action. Try them with your own projects.' }
+])
+
+const { proxy } = getCurrentInstance()
+const startHermesTour = () => { proxy.$tours['hermesTour'].start() }
+</script>
+
+<div class="grid grid-cols-2 gap-4 text-xs">
+
+<div>
+
+<div id="hermes-what">
+
+### 🧠 What is Hermes Agent?
+By **Nous Research** — a fully autonomous AI agent optimized for local models. It decomposes goals into subtasks, executes using tools (shell, filesystem, Python, web), self-verifies results, and retries on failure.
+
+</div>
+
+<div id="hermes-install">
+
+### 📦 Step 1: Install & Model Setup
+```bash
+# Install Hermes Agent
+pip install hermes-agent
+# Or with uv (faster):
+uv pip install hermes-agent
+
+# Pull recommended models (pick based on your GPU)
+# 6 GB VRAM — fast, good for simple tasks:
+ollama pull qwen3:8b
+
+# 8-12 GB VRAM — strong reasoning:
+ollama pull gemma3:12b
+
+# 20+ GB VRAM — near-frontier quality:
+ollama pull qwen3:32b
+
+# Verify Ollama is serving:
+curl http://localhost:11434/api/tags
+```
+
+</div>
+
+<div id="hermes-config">
+
+### ⚙️ Step 2: Configuration
+```yaml
+# hermes_config.yaml
+provider: ollama
+model: qwen3:8b
+base_url: http://localhost:11434
+
+# Execution limits (safety)
+max_iterations: 25        # max planning loops
+max_tool_calls: 50        # total tool invocations
+timeout_seconds: 300      # per-task timeout
+
+# Tools to enable
+tools:
+  - shell           # execute shell commands
+  - file_system     # read/write/list files
+  - python          # run Python scripts
+  - web_search      # search the internet
+  - browser         # browse web pages
+
+# Working directory (sandboxed)
+workspace: ./hermes_workspace
+
+# Safety
+confirm_destructive: true   # ask before rm, etc.
+allowed_dirs:               # restrict file access
+  - ./hermes_workspace
+  - ./my-project
+```
+
+</div>
+
+</div>
+
+<div>
+
+<div id="hermes-tools">
+
+### 🔧 Step 3: Built-in & Custom Tools
+| Tool | Capability | Risk Level |
+|------|-----------|------------|
+| `shell` | Run any shell command | ⚠️ High |
+| `file_system` | Read/write/delete files | ⚠️ Medium |
+| `python` | Execute Python code | ⚠️ Medium |
+| `web_search` | Search via DuckDuckGo/Serper | Low |
+| `browser` | Navigate and extract web pages | Low |
+| `mcp` | Connect to any MCP server | Varies |
+
+```yaml
+# Add custom MCP tools to hermes_config.yaml
+mcp_servers:
+  - name: "my-mcp-server"
+    command: "python"
+    args: ["./my_mcp_server.py"]
+  - name: "github"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+```
+
+</div>
+
+<div id="hermes-examples">
+
+### � Step 4: Run Autonomous Tasks
+
+```bash
+# Example 1: Code analysis
+hermes --config hermes_config.yaml \
+  "Analyze the ./my-project repo. Find all 
+   TODO comments, group by file, and create 
+   a prioritized issues.md with estimates."
+
+# Example 2: Infrastructure audit
+hermes --config hermes_config.yaml \
+  "Read all Terraform files in ./infra, 
+   identify security misconfigs (open SGs, 
+   no encryption), and generate a report."
+
+# Example 3: Documentation generation
+hermes --config hermes_config.yaml \
+  "Read the Python source in ./src, generate 
+   API documentation in Markdown format, 
+   including function signatures and examples."
+
+# Example 4: Debug assistance
+hermes --config hermes_config.yaml \
+  "The test in tests/test_auth.py is failing.
+   Read the test, read the source it tests, 
+   identify the bug, and propose a fix."
+```
+
+### 🔄 How Hermes Executes
+
+```
+Goal → Plan subtasks → Execute step 1
+  ↓         ↑              ↓
+  ↓    Replan if needed    Observe result
+  ↓         ↑              ↓
+  └─── Verify final output ←──────────┘
+```
+
+💡 **Tip**: Start with `max_iterations: 10` for simple tasks. Complex multi-file tasks may need 25+.
+
+</div>
+
+</div>
+
+</div>
+
+---
 layout: section
 ---
 

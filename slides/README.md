@@ -34,6 +34,7 @@ This presentation includes guided joyride tours (via `vue3-tour`) on key lab sli
 | Lab 3 | Multi-Agent Code Review System (CrewAI) |
 | Lab 4 | AI for AWS Infrastructure — SRE context (Terraform, CloudWatch MCP, runbooks) |
 | Lab 5 | AI for Managed Service Providers — MSP context (NinjaRMM MCP, ticket triage, SOP RAG) |
+| Lab 6 | Local AI Agents — Deploy OpenClaw (personal assistant) & Hermes Agent (autonomous executor) with Ollama |
 
 ## Export to PDF
 
