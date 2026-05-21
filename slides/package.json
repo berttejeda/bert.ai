@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "slidev --open",
-    "build": "slidev build",
+    "build": "slidev build --base https://berttejeda.github.io/bert.ai/",
     "export": "slidev export"
   },
   "dependencies": {
