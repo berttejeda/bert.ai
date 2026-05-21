@@ -1,9 +1,0 @@
-{
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "ollama/gemma-4-E2B-it-uncensored-Q8_0"
-      }
-    }
-  }
-}
