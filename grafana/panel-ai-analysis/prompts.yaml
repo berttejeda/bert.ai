@@ -53,7 +53,7 @@ fluxSystemPrompt: |
 # These are appended to the system prompt as few-shot examples.
 # The {{.Bucket}} variable is available inside each query.
 fluxExamples:
-  - question: "Which stocks currently have RSI below 30 (oversold)?"
+  - question: 'Which stocks currently have RSI below 30 (oversold)?'
     query: |
       from(bucket: "{{.Bucket}}")
         |> range(start: -7d)
@@ -96,7 +96,7 @@ fluxExamples:
         as: (l, r) => ({ticker: l.ticker, trailing_pe: l.trailing_pe, forward_pe: l.forward_pe, profit_margin: r.profit_margin}))
         |> sort(columns: ["ticker"])
 
-  - question: "Which stocks have the highest analyst target price upside vs current price?"
+  - question: 'Which stocks have the highest analyst target price upside vs current price?'
     query: |
       import "join"
 
@@ -124,7 +124,7 @@ fluxExamples:
         |> sort(columns: ["upside_pct"], desc: true)
         |> limit(n: 25)
 
-  - question: "Find stocks with Piotroski score >= 7 and RSI < 50"
+  - question: 'Find stocks with Piotroski score >= 7 and RSI < 50'
     query: |
       import "join"
 
@@ -148,7 +148,7 @@ fluxExamples:
         as: (l, r) => ({ticker: l.ticker, piotroski_score: l.piotroski_score, rsi: r.rsi}))
         |> sort(columns: ["piotroski_score"], desc: true)
 
-  - question: "Show me the EPS actual vs estimate history for NVDA"
+  - question: 'Show me the EPS actual vs estimate history for NVDA'
     query: |
       from(bucket: "{{.Bucket}}")
         |> range(start: -365d)
@@ -159,10 +159,81 @@ fluxExamples:
         |> sort(columns: ["_time"], desc: true)
         |> limit(n: 25)
 
+  - question: 'Which growth stocks are hitting a 52-week high and trending above their 200-day moving average?'
+    query: |
+      import "join"
+
+      current = from(bucket: "{{.Bucket}}")
+        |> range(start: -7d)
+        |> filter(fn: (r) => r._measurement == "stock_data" and (r._field == "current_price" or r._field == "ma_200"))
+        |> group(columns: ["ticker", "_field"]) |> last()
+        |> pivot(rowKey: ["ticker"], columnKey: ["_field"], valueColumn: "_value")
+        |> filter(fn: (r) => r.current_price > r.ma_200)
+        |> keep(columns: ["ticker", "current_price", "ma_200"])
+        |> group()
+
+      high52w = from(bucket: "{{.Bucket}}")
+        |> range(start: -365d)
+        |> filter(fn: (r) => r._measurement == "price_history" and r._field == "close")
+        |> group(columns: ["ticker"])
+        |> max()
+        |> keep(columns: ["ticker", "_value"])
+        |> rename(columns: {_value: "high_52w"})
+        |> group()
+
+      join.inner(left: current, right: high52w, on: (l, r) => l.ticker == r.ticker,
+        as: (l, r) => ({
+          ticker: l.ticker,
+          current_price: l.current_price,
+          ma_200: l.ma_200,
+          high_52w: r.high_52w,
+          pct_from_high: (r.high_52w - l.current_price) / r.high_52w * 100.0
+        }))
+        |> filter(fn: (r) => r.pct_from_high <= 5.0 and r.pct_from_high >= -5.0)
+        |> sort(columns: ["pct_from_high"])
+        |> limit(n: 25)
+
+  - question: 'Show me growth stocks with quarterly revenue growth above 20% and strong profit margins'
+    query: |
+      from(bucket: "{{.Bucket}}")
+        |> range(start: -7d)
+        |> filter(fn: (r) => r._measurement == "eodhd_fundamentals" and (r._field == "quarterly_revenue_growth" or r._field == "profit_margin"))
+        |> group(columns: ["ticker", "_field"]) |> last()
+        |> pivot(rowKey: ["ticker"], columnKey: ["_field"], valueColumn: "_value")
+        |> filter(fn: (r) => r.quarterly_revenue_growth > 0.20 and r.profit_margin > 0.10)
+        |> keep(columns: ["ticker", "quarterly_revenue_growth", "profit_margin"])
+        |> group()
+        |> sort(columns: ["quarterly_revenue_growth"], desc: true)
+        |> limit(n: 25)
+
 # --- Result Formatting ---
 # The system prompt sent to the LLM when formatting Flux query results.
 formatSystemPrompt: |
-  You are a financial analyst assistant. Format and summarize the following Flux query results in markdown.
+  You are a financial analyst assistant and an expert stock screener. 
+
+  Format and summarize the following Flux query results in markdown.
+
+  Apply the principles of both Value and Growth investing to filter and evaluate stocks:
+
+  # Value Investing (Benjamin Graham & Warren Buffett)
+  - Focus on fundamental analysis and emotional discipline rather than market fluctuations.
+  - Seek undervalued stocks and "hidden gems," particularly larger companies experiencing temporary unpopularity.
+  - Evaluate fundamental metrics such as P/E ratios and Piotroski scores to determine intrinsic value.
+  - "Never invest in a business you cannot understand."
+
+  # Growth Investing (T. Rowe Price Jr.)
+  - Look for companies with rapid, steady revenue growth that outpaces the market average.
+  - Ensure the company has improving profit margins and a strong balance sheet to fund future growth without over-reliance on outside money.
+  - Evaluate the total addressable market size and potential for expansion.
+  - Identify a sustainable competitive advantage (e.g., brand loyalty, unique user-friendly design).
+  - Examine the quality and vision of the management team.
+
+  # General Guidelines
+  - Blend quantitative analysis with industry knowledge.
+  - Maintain a robust "buy and hold" or Dollar-Cost Averaging (DCA) strategy, keeping in mind that selling should be grounded in analysis, not emotion.
+  - If evaluating funds, prioritize low expense ratios to avoid high fees eating into long-term growth (John Bogle's index investing principle).
+
+  Provide a comprehensive screening analysis that highlights these key financial features and clearly categorizes stocks into Value or Growth prospects based on the data.
 
   Include:
   - A brief summary of the findings

@@ -26,4 +26,6 @@ export const SUGGESTED_QUESTIONS = [
   'Which stocks have the highest short ratio?',
   'Show dividend yield for all stocks, sorted highest first',
   'Compare quarterly revenue growth across all tickers',
+  'Which growth stocks are hitting a 52-week high and trending above their 200-day moving average?',
+  'Show me growth stocks with quarterly revenue growth above 20% and strong profit margins',
 ];
