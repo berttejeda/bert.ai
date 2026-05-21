@@ -51,6 +51,8 @@ OUTPUT_FILE = os.path.join(tempfile.gettempdir(), 'rendered_md.html')
 llm_cache = {}
 source_cache = {}
 block_registry = {}
+block_order = []
+block_results = {}
 
 def execute_block(source_hash):
     block = block_registry.get(source_hash)
@@ -66,6 +68,25 @@ def execute_block(source_hash):
     options = block["options"]
     md = block["md"]
     debug = block["debug"]
+    scope = block.get("scope")
+    require_prior = block.get("require_prior", True)
+
+    # For global-scope blocks, enforce prior-block execution requirement
+    if scope == "global" and require_prior:
+        prior_hashes = []
+        for h in block_order:
+            if h == source_hash:
+                break
+            prior_hashes.append(h)
+        missing = [h for h in prior_hashes if h not in block_results]
+        if missing:
+            return (
+                '<div class="mui-card-content" style="color: orange;">'
+                '<strong>Waiting:</strong> All prior code blocks must be executed '
+                'before this global-scope block can run. '
+                f'({len(missing)} block(s) remaining)'
+                '</div>'
+            )
 
     if debug:
         print("\n" + "="*40)
@@ -83,9 +104,37 @@ def execute_block(source_hash):
             raw_stdout = ""
     except Exception as e:
         raw_stdout = f"Execution Error: {e}"
-        
+
+    # Gather prior context for global-scope blocks
+    prior_context = None
+    if scope == "global" and prompt_line:
+        ai_config = merged_vars.get("ai", {})
+        max_stdout_per_block = int(ai_config.get("max_stdout_per_block", 2000))
+        max_context_chars = int(ai_config.get("max_context_chars", 12000))
+        prior_context_parts = []
+        for i, h in enumerate(block_order):
+            if h == source_hash:
+                break
+            if h in block_results:
+                r = block_results[h]
+                part = f"--- Block {i + 1} ---\n"
+                if r["stdout"]:
+                    stdout_text = r["stdout"]
+                    if len(stdout_text) > max_stdout_per_block:
+                        stdout_text = stdout_text[:max_stdout_per_block] + "\n... [truncated]"
+                    part += f"Output:\n{stdout_text}\n"
+                if r["llm_response"]:
+                    part += f"AI Analysis:\n{r['llm_response']}\n"
+                prior_context_parts.append(part)
+        if prior_context_parts:
+            prior_context = "\n".join(prior_context_parts)
+            if len(prior_context) > max_context_chars:
+                prior_context = prior_context[:max_context_chars] + "\n... [context truncated]"
+            print(f"    Global scope: prior context size = {len(prior_context)} chars")
+
+    llm_response = ""
     if prompt_line:
-        payload = prompt_line + raw_stdout
+        payload = prompt_line + raw_stdout + (prior_context or "")
         payload_hash = hashlib.md5(payload.encode('utf-8')).hexdigest()
         
         if payload_hash in llm_cache:
@@ -96,7 +145,8 @@ def execute_block(source_hash):
                 code=clean_source_str,
                 raw_stdout=raw_stdout,
                 ai_config=merged_vars.get("ai", {}),
-                cli_timeout=cli_timeout
+                cli_timeout=cli_timeout,
+                prior_context=prior_context
             )
             llm_cache[payload_hash] = llm_response
             
@@ -108,7 +158,13 @@ def execute_block(source_hash):
             final_html = _format_bash(code=final_source, md=md, **options)
         else:
             final_html = ""
-            
+
+    # Store results for downstream global-scope blocks
+    block_results[source_hash] = {
+        "stdout": raw_stdout,
+        "llm_response": llm_response
+    }
+
     source_cache[source_hash] = final_html
     return final_html
 
@@ -176,7 +232,7 @@ def start_server(port: int = 5500):
     print(f"Server running at http://localhost:{port}")
 
 
-def ask_llm(prompt, code, raw_stdout, ai_config, cli_timeout=None):
+def ask_llm(prompt, code, raw_stdout, ai_config, cli_timeout=None, prior_context=None):
     """Sends the prompt, code, and stdout to the configured LLM API (Ollama by default)."""
     base_url = ai_config.get("base_url", "http://localhost:11434").rstrip("/")
     model = ai_config.get("model", "llama3")
@@ -193,8 +249,17 @@ def ask_llm(prompt, code, raw_stdout, ai_config, cli_timeout=None):
             timeout_sec = float(timeout)
 
     # Build the full prompt
-    full_prompt = f"""You are a helpful assistant. 
+    context_section = ""
+    if prior_context:
+        context_section = f"""The following is context gathered from all previously executed blocks in this document:
+```text
+{prior_context}
+```
 
+"""
+
+    full_prompt = f"""You are a helpful assistant. 
+{context_section}
 The following is the output of an executed script:
 ```text
 {raw_stdout}
@@ -229,6 +294,32 @@ Please respond using Markdown. Only output the final markdown response.
         return f"**Error from LLM:** `{e}`"
 
 
+def _inject_scope_markers(text):
+    """Detect <span data-scope="..."> wrappers and inject # Scope: comments into contained code fences."""
+    lines = text.split('\n')
+    result = []
+    pending_scope = None
+    pending_require_prior = "true"
+    for line in lines:
+        scope_match = re.search(r'data-scope="([^"]*)"', line)
+        if scope_match and '<span' in line:
+            pending_scope = scope_match.group(1)
+            rp_match = re.search(r'data-require-prior="([^"]*)"', line)
+            pending_require_prior = rp_match.group(1) if rp_match else "true"
+            result.append(line)
+            continue
+        if pending_scope and re.match(r'^```(\w+)', line):
+            result.append(line)
+            result.append(f'# Scope: {pending_scope}')
+            if pending_require_prior.lower() != "true":
+                result.append(f'# RequirePrior: {pending_require_prior}')
+            pending_scope = None
+            pending_require_prior = "true"
+            continue
+        result.append(line)
+    return '\n'.join(result)
+
+
 def build(md_file_path, cli_timeout=None, debug=False, is_background=False, execute_on_startup=False, extra_vars=None):
     """
     Reads a Markdown file, processes it with custom extensions, and renders it as HTML.
@@ -249,6 +340,8 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
     
     # Clear the shared session so variables from the previous build don't leak into the new one
     _sessions_globals.pop("ai-shared-session", None)
+    block_order.clear()
+    block_results.clear()
     
     with open(md_file_path, "r", encoding="utf-8") as f:
         document = frontmatter.load(f)
@@ -266,6 +359,9 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
     # Interpolate global variables into the markdown text
     env = jinja2.Environment(undefined=PassThroughUndefined)
     markdown_text = env.from_string(markdown_text).render(**global_vars)
+
+    # Inject scope markers from <span data-scope="..."> wrappers into code fences
+    markdown_text = _inject_scope_markers(markdown_text)
 
     def ai_formatter(source, language, css_class, options, md, **kwargs):
         """
@@ -285,6 +381,8 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
         prompt_line = None
         prompt_lines = []
         clean_source = []
+        scope = None
+        require_prior = True
         
         in_vars = False
         in_prompt = False
@@ -297,6 +395,10 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
             elif in_prompt:
                 # Strip leading '# ' from prompt content lines
                 prompt_lines.append(line.lstrip("# "))
+            elif line.startswith("# Scope:"):
+                scope = line.replace("# Scope:", "").strip()
+            elif line.startswith("# RequirePrior:"):
+                require_prior = line.replace("# RequirePrior:", "").strip().lower() == "true"
             elif line.startswith("# Prompt:"):
                 prompt_line = line.replace("# Prompt:", "").strip()
             elif line.startswith("# vars:"):
@@ -361,8 +463,13 @@ def build(md_file_path, cli_timeout=None, debug=False, is_background=False, exec
             "cli_timeout": cli_timeout,
             "options": options,
             "md": md,
-            "debug": debug
+            "debug": debug,
+            "scope": scope,
+            "require_prior": require_prior
         }
+        
+        if source_hash not in block_order:
+            block_order.append(source_hash)
         
         if source_hash in source_cache:
             return source_cache[source_hash]

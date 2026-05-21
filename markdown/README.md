@@ -137,7 +137,35 @@ When executed, the script will:
 3. Send the prompt + output to the LLM.
 4. Replace the code block in the HTML with the LLM's Markdown response.
 
-### 4. Block-Level Variable Overrides
+### 4. Global-Scope Blocks
+
+Wrap a code block in a `<span data-scope="global">` to make it a **global-scope block**. When executed, the block gathers the raw stdout **and** LLM responses from every previously executed block and includes them as prior context in its prompt:
+
+````markdown
+<span data-scope="global" class="prompt-code-block">
+
+```bash
+# BeginPrompt
+# Summarize all findings from the document.
+# EndPrompt
+```
+
+</span>
+````
+
+By default, a global block **requires all prior blocks to have been executed first**. To relax this, add `data-require-prior="false"`:
+
+````markdown
+<span data-scope="global" data-require-prior="false" class="prompt-code-block">
+
+```bash
+# Prompt: Give a partial summary based on whatever data is available so far.
+```
+
+</span>
+````
+
+### 5. Block-Level Variable Overrides
 
 Override or add variables for a single block using `# vars:` YAML comments:
 
