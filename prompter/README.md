@@ -23,31 +23,67 @@ pip install -r requirements.txt
 
 Configuration is loaded from `config.yaml` (or a path specified via `--config` / `AI_CONFIG_FILE` env var). The file is templatized — environment variables like `${AI_API_URL}` are resolved at load time.
 
-### Minimal config (Ollama)
+### Ollama
 
 ```yaml
 ai:
   provider: 'ollama'
   api_url: 'http://127.0.0.1:11434'
   model: 'llama3'
-  tasks:
-    summary:
-      context: "You are a helpful assistant."
-      prompt: "Summarize the following text concisely."
 ```
 
-### Cloud provider config (OpenAI)
+### llama.cpp
+
+```yaml
+ai:
+  provider: 'llama_cpp'
+  api_url: 'http://127.0.0.1:8080'
+  model: 'my-model'
+```
+
+### OpenAI
 
 ```yaml
 ai:
   provider: 'openai'
-  # api_url is auto-detected for openai, anthropic, gemini
+  # api_url auto-detected as https://api.openai.com
   model: 'gpt-4o-mini'
   api_key: "${OPENAI_API_KEY}"
-  tasks:
-    summary:
-      context: "You are a helpful assistant."
-      prompt: "Summarize the following text concisely."
+```
+
+### Anthropic
+
+```yaml
+ai:
+  provider: 'anthropic'
+  # api_url auto-detected as https://api.anthropic.com
+  model: 'claude-sonnet-4-20250514'
+  api_key: "${ANTHROPIC_API_KEY}"
+  max_tokens: 4096  # optional, default: 4096
+```
+
+### Gemini
+
+```yaml
+ai:
+  provider: 'gemini'
+  # api_url auto-detected as https://generativelanguage.googleapis.com
+  model: 'gemini-2.5-flash'
+  api_key: "${GEMINI_API_KEY}"
+```
+
+### Enterprise OAuth gateway (openai_oauth)
+
+```yaml
+ai:
+  provider: 'openai_oauth'
+  api_url: 'https://your-enterprise-gateway.example.com'
+  model: 'gpt-4o-mini'
+  token_url: 'https://auth.example.com/oauth/token'
+auth:
+  CLIENT_ID: "${AI_CLIENT_ID}"
+  CLIENT_SECRET: "${AI_CLIENT_SECRET}"
+  APPKEY: "${AI_APPKEY}"
 ```
 
 ### Key config fields
