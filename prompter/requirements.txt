@@ -1,4 +1,5 @@
 btconfig
+bt-cred-resolver
 fastapi
 first
 loguru

@@ -26,7 +26,7 @@ except ImportError:
     HAS_FASTAPI = False
 
 __docstring__ = 'Commandline AI Prompt Interface'
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # Default API base URLs per provider (used when ai.api_url is not set)
 DEFAULT_API_URLS = {
@@ -46,7 +46,7 @@ script_file_path = Path(__file__).resolve()
 script_dir = script_file_path.parent
 script_parent_dir = script_dir.parent
 
-from bt_utils import CredentialResolver, RequiredCredentialMissingError
+from bt_cred_resolver import CredentialResolver, RequiredCredentialMissingError
 
 # Initialize logger
 logger = logger.patch(lambda record: record.update(name="ai.prompt"))
