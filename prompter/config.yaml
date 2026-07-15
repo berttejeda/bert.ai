@@ -1,9 +1,19 @@
 ai:
-  provider: 'ollama'  # 'ollama' for direct Ollama API, 'openai' for OAuth-protected OpenAI-compatible API
-  api_url: "${OLLAMA_API_URL}"
-  # api_url: 'http://10.10.1.90:11434'
+  # Provider: ollama, llama_cpp, openai, anthropic, gemini, openai_oauth
+  provider: 'ollama'
+  api_url: "${AI_API_URL}"
+  # api_url: 'http://127.0.0.1:11434'                                    # ollama default
+  # api_url: 'http://127.0.0.1:8080'                                     # llama.cpp default
+  # api_url: 'https://api.openai.com'                                    # openai (auto-detected if omitted)
+  # api_url: 'https://api.anthropic.com'                                 # anthropic (auto-detected if omitted)
+  # api_url: 'https://generativelanguage.googleapis.com'                 # gemini (auto-detected if omitted)
   language: 'en-US'  # Set the default language for transcription
-  model: "${OLLAMA_MODEL}"
+  model: "${AI_MODEL}"
+  # model: 'gpt-4o-mini'                                                 # openai
+  # model: 'claude-sonnet-4-20250514'                                    # anthropic
+  # model: 'gemini-2.5-flash'                                            # gemini
+  # api_key: "${AI_API_KEY}"                                              # required for openai, anthropic, gemini
+  # max_tokens: 4096                                                      # anthropic max_tokens (default: 4096)
   verify_tls: true
   tasks:
     translate: 

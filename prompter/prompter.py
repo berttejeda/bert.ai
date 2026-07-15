@@ -26,7 +26,21 @@ except ImportError:
     HAS_FASTAPI = False
 
 __docstring__ = 'Commandline AI Prompt Interface'
-__version__ = "1.1.0"
+__version__ = "1.2.0"
+
+# Default API base URLs per provider (used when ai.api_url is not set)
+DEFAULT_API_URLS = {
+    'openai': 'https://api.openai.com',
+    'anthropic': 'https://api.anthropic.com',
+    'gemini': 'https://generativelanguage.googleapis.com',
+}
+
+# Environment variable names for API keys per provider
+API_KEY_ENV_VARS = {
+    'openai': 'OPENAI_API_KEY',
+    'anthropic': 'ANTHROPIC_API_KEY',
+    'gemini': 'GEMINI_API_KEY',
+}
 
 script_file_path = Path(__file__).resolve()
 script_dir = script_file_path.parent
@@ -49,9 +63,11 @@ def parse_args():
     parser.add_argument('--prompt-context', '-x', help='Custom prmpt context for AI interaction')
     parser.add_argument('--webhook-mode', action='store_true', help='Run as FastAPI server; accept POST /api/v1/prompt with JSON body {message, task}')
     parser.add_argument('--webhook-port', type=int, default=2048, help='Port for webhook server (default: 2048)')
-    parser.add_argument('--ai-api-url', default=os.environ.get('OLLAMA_API_URL'), help='AI API URL')
+    parser.add_argument('--ai-api-url', default=os.environ.get('AI_API_URL'), help='AI API base URL')
     parser.add_argument('--ai-model', default="gpt-4o-mini", help='AI Model')
-    parser.add_argument('--provider', choices=['ollama', 'openai'], default=None, help='AI provider: ollama (no auth) or openai (OAuth-protected)')
+    parser.add_argument('--provider', choices=['ollama', 'llama_cpp', 'openai', 'anthropic', 'gemini', 'openai_oauth'], default=None,
+                        help='AI provider (ollama, llama_cpp, openai, anthropic, gemini, openai_oauth)')
+    parser.add_argument('--api-key', help='API key for the AI provider (OpenAI, Anthropic, Gemini)')
     parser.add_argument('--token-url', help='OAuth token URL')
     parser.add_argument('--client-id', help='OAuth Client ID')
     parser.add_argument('--client-secret', help='OAuth Client Secret')
@@ -101,7 +117,7 @@ def load_config_from_args(args):
     config_file = first([
         args.config,
         f'{script_dir}/config.yaml',
-        os.environ.get('OLLAMA_CONFIG_FILE')
+        os.environ.get('AI_CONFIG_FILE')
     ])
     if not config_file:
         logger.error("No configuration file specified!")
@@ -119,40 +135,59 @@ def load_config_from_args(args):
         logger.error(f'Configuration is empty! Check your config file: {config_file}')
         sys.exit(2)
 
-    # Determine provider: CLI arg > config > default 'openai'
-    provider = first([args.provider, config.get('ai.provider'), 'openai'])
+    # Determine provider: CLI arg > config > default 'ollama'
+    provider = first([args.provider, config.get('ai.provider'), 'ollama'])
     config.setdefault('ai', {})
     config['ai']['provider'] = provider
 
     ai_api_url = first([args.ai_api_url, config.get('ai.api_url')])
+    # Fall back to default API URL for known cloud providers
+    if not ai_api_url and provider in DEFAULT_API_URLS:
+        ai_api_url = DEFAULT_API_URLS[provider]
     config['ai']['api_url'] = ai_api_url
 
     ai_model = config.ai.get('model', args.ai_model)
     verify_tls = config.ai.get('verify_tls', True) or (not args.no_verify_tls)
     logger.debug(f"TLS verification: {verify_tls}")
-    
-    if provider == 'ollama':
-        # Ollama requires no OAuth — skip auth resolution entirely
-        logger.debug(f"Using Ollama provider at {ai_api_url}")
+
+    if provider in ('ollama', 'llama_cpp'):
+        # Ollama / llama.cpp — no auth required
+        logger.debug(f"Using {provider} provider at {ai_api_url}")
         return (config, ai_model, verify_tls)
 
-    # OpenAI / OAuth-protected provider — resolve auth credentials
+    if provider in ('openai', 'anthropic', 'gemini'):
+        # API key auth — resolve from CLI, config, or environment
+        env_var = API_KEY_ENV_VARS.get(provider, 'AI_API_KEY')
+        api_key = first([
+            getattr(args, 'api_key', None),
+            config.get('ai.api_key'),
+            os.environ.get(env_var),
+            os.environ.get('AI_API_KEY'),
+        ])
+        if not api_key:
+            quit(f"API key required for provider '{provider}'. "
+                 f"Use --api-key, set ai.api_key in config, or set {env_var} env var.")
+        config['ai']['api_key'] = api_key
+        logger.debug(f"Using {provider} provider at {ai_api_url}")
+        return (config, ai_model, verify_tls)
+
+    # openai_oauth — OAuth-protected OpenAI-compatible API (enterprise gateway)
     ai_token_url = first([args.token_url, config.get('ai.token_url')])
     ai_client_id = (
         first([args.client_id, config.get('auth.CLIENT_ID')])
         or credential_resolver.resolve_credential(
-            name='OLLAMA_CLIENT_ID', keyring_name='OLLAMA_CLIENT_ID', required=True)
-        or quit('Could not determine OLLAMA_CLIENT_ID from cli args, environment variables, config, or password manager'))
+            name='AI_CLIENT_ID', keyring_name='AI_CLIENT_ID', required=True)
+        or quit('Could not determine AI_CLIENT_ID from cli args, environment variables, config, or password manager'))
     ai_client_secret = (
         first([args.client_secret, config.get('auth.CLIENT_SECRET')])
         or credential_resolver.resolve_credential(
-            name='OLLAMA_CLIENT_SECRET', keyring_name='OLLAMA_CLIENT_SECRET', required=True)
-        or quit('Could not determine OLLAMA_CLIENT_SECRET from cli args, environment variables, config, or password manager'))
+            name='AI_CLIENT_SECRET', keyring_name='AI_CLIENT_SECRET', required=True)
+        or quit('Could not determine AI_CLIENT_SECRET from cli args, environment variables, config, or password manager'))
     ai_app_key = (
         first([args.app_key, config.get('auth.APPKEY')])
         or credential_resolver.resolve_credential(
-            name='OLLAMA_APPKEY', keyring_name='OLLAMA_APPKEY', required=True)
-        or quit('Could not determine OLLAMA_APPKEY from cli args, environment variables, config, or password manager'))
+            name='AI_APPKEY', keyring_name='AI_APPKEY', required=True)
+        or quit('Could not determine AI_APPKEY from cli args, environment variables, config, or password manager'))
 
     config['ai']['token_url'] = ai_token_url
     config['token_url'] = ai_token_url
@@ -212,7 +247,9 @@ def process_text(**kwargs):
     Args:
         text: Input text to process
         config: Configuration dictionary
-        prompt_context: Context for prompt
+        context: Context for prompt
+        task: Task name
+        model: AI model name
         verify_tls: Whether to verify TLS certificates
     
     Returns:
@@ -224,34 +261,76 @@ def process_text(**kwargs):
     task = kwargs['task']
     model = kwargs['model']
     verify_tls = kwargs.get('verify_tls')
-    provider = config.ai.get('provider', 'openai')
+    provider = config.ai.get('provider', 'ollama')
 
     if not config.ai.tasks.get(task):
         quit(f'Unrecognized task {task}')
     
     prompt = config.ai.tasks[task].prompt
 
-    logger.debug(f"Processing task: {task}")
+    logger.debug(f"Processing task: {task} (provider: {provider})")
 
-    api_url_from_config = config.ai.api_url
+    api_url = config.ai.api_url
+    api_key = config.ai.get('api_key')
+    system_content = f"{context}\n{prompt}"
 
-    if provider == 'ollama':
-        # Ollama OpenAI-compatible endpoint — no auth required
-        ai_api_url = f"{api_url_from_config}/v1/chat/completions"
+    if provider in ('ollama', 'llama_cpp'):
+        # Ollama / llama.cpp OpenAI-compatible endpoint — no auth required
+        ai_api_url = f"{api_url}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": text.strip()}
+            ]
+        }
+    elif provider == 'openai':
+        # Standard OpenAI API with Bearer token auth
+        ai_api_url = f"{api_url}/v1/chat/completions"
         headers = {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
         }
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": f"{context}\n{prompt}"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": text.strip()}
             ]
         }
-    else:
-        # OAuth-protected OpenAI-compatible API
+    elif provider == 'anthropic':
+        # Anthropic Claude API — different request/response format
+        ai_api_url = f"{api_url}/v1/messages"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01"
+        }
+        payload = {
+            "model": model,
+            "max_tokens": config.ai.get('max_tokens', 4096),
+            "system": system_content,
+            "messages": [
+                {"role": "user", "content": text.strip()}
+            ]
+        }
+    elif provider == 'gemini':
+        # Google Gemini API — different request/response format
+        ai_api_url = f"{api_url}/v1beta/models/{model}:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": system_content}]
+            },
+            "contents": [
+                {"role": "user", "parts": [{"text": text.strip()}]}
+            ]
+        }
+    elif provider == 'openai_oauth':
+        # OAuth-protected OpenAI-compatible API (enterprise gateway)
         access_token = get_access_token(config, verify_tls)
-        ai_api_url = f"{api_url_from_config}/{model}/chat/completions"
+        ai_api_url = f"{api_url}/{model}/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -259,21 +338,42 @@ def process_text(**kwargs):
         }
         payload = {
             "messages": [
-                {"role": "system", "content": f"{context}\n{prompt}"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": text.strip()}
             ],
-            "user": json.dumps({ 'appkey': config.auth.APPKEY})
+            "user": json.dumps({'appkey': config.auth.APPKEY})
         }
-    
+    else:
+        quit(f"Unsupported provider: {provider}")
+
     try:
         response = requests.post(ai_api_url, headers=headers, json=payload, verify=verify_tls)
         response.raise_for_status()
-        choices = response.json().get("choices", [])
-        if choices:
-            text = choices[0].get("message", {}).get("content", "").strip()
-            logger.debug(f"Task '{task}' completed successfully")
+        response_json = response.json()
+
+        # Extract response based on provider format
+        if provider == 'anthropic':
+            content_blocks = response_json.get("content", [])
+            if content_blocks:
+                text = content_blocks[0].get("text", "").strip()
+            else:
+                raise RuntimeError(f"{task.capitalize()} unavailable from AI service.")
+        elif provider == 'gemini':
+            candidates = response_json.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = parts[0].get("text", "").strip() if parts else ""
+            else:
+                raise RuntimeError(f"{task.capitalize()} unavailable from AI service.")
         else:
-            raise RuntimeError(f"{task.capitalize()} unavailable from AI service.")
+            # OpenAI-compatible response format (ollama, llama_cpp, openai, openai_oauth)
+            choices = response_json.get("choices", [])
+            if choices:
+                text = choices[0].get("message", {}).get("content", "").strip()
+            else:
+                raise RuntimeError(f"{task.capitalize()} unavailable from AI service.")
+
+        logger.debug(f"Task '{task}' completed successfully")
     except requests.exceptions.HTTPError as e:
         logger.error(f"HTTP error during {task}: {e} - {response.text}")
         raise RuntimeError(f"HTTP error: {e} - {response.text}")
