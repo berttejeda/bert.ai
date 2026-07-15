@@ -58,7 +58,7 @@ def parse_args():
     parser.add_argument('--app-key', help='Application Key')
     parser.add_argument('--extra-vars', '-e', action='append', help='Specify extra variables for config template as -e key=value pairs (can be specified multiple times)', default=[])
     parser.add_argument('--output', '-o', help='Output file path (default: stdout)')
-    parser.add_argument('--verify-tls', action='store_true', help='Verify TLS certificates')
+    parser.add_argument('--no-verify-tls', action='store_true', help='Disable TLS verification')
     parser.add_argument('--debug', '-D', action='store_true', help='Enable debug logging')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     parser.add_argument(
@@ -128,7 +128,7 @@ def load_config_from_args(args):
     config['ai']['api_url'] = ai_api_url
 
     ai_model = config.ai.get('model', args.ai_model)
-    verify_tls = config.ai.get('verify_tls', False) or args.verify_tls
+    verify_tls = config.ai.get('verify_tls', True) or (not args.no_verify_tls)
     logger.debug(f"TLS verification: {verify_tls}")
     
     if provider == 'ollama':
@@ -244,8 +244,7 @@ def process_text(**kwargs):
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": context},
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": f"{context}\n{prompt}"},
                 {"role": "user", "content": text.strip()}
             ]
         }
@@ -260,8 +259,7 @@ def process_text(**kwargs):
         }
         payload = {
             "messages": [
-                {"role": "system", "content": context},
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": f"{context}\n{prompt}"},
                 {"role": "user", "content": text.strip()}
             ],
             "user": json.dumps({ 'appkey': config.auth.APPKEY})
@@ -443,7 +441,7 @@ def main():
     logger.info(f"Processing text with task {ai_task}")
     
     # Set TLS verification
-    verify_tls = args.verify_tls
+    verify_tls = not args.no_verify_tls
     
     # Process the text
     try:
