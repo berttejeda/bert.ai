@@ -39,3 +39,6 @@ __pycache__
 
 # environment files
 .env
+
+# Log files
+start.sh.log
