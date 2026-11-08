@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "AI RAG Table",
+  "id": "bertai-panel-ai-rag-table",
+  "backend": true,
+  "executable": "gpx_bertai-panel-ai-rag-table",
+  "info": {
+    "keywords": ["panel", "table", "ai", "rag", "filter", "llm", "analysis"],
+    "description": "Table panel with live column/row filtering and RAG-powered AI analysis using Gemini, Ollama, or any OpenAI-compatible endpoint",
+    "author": {
+      "name": "bert.ai"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "version": "1.0.0"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.4.0",
+    "plugins": []
+  }
+}

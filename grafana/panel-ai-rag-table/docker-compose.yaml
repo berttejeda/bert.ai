@@ -1,0 +1,32 @@
+services:
+  grafana:
+    extends:
+      file: .config/docker-compose-base.yaml
+      service: grafana
+    ports:
+      - "3000:3000/tcp"
+    environment:
+      GF_DEFAULT_APP_MODE: development
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash-exp}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
+      OPENAI_COMPAT_ENDPOINT: ${OPENAI_COMPAT_ENDPOINT:-}
+      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
+      OPENAI_COMPAT_MODEL: ${OPENAI_COMPAT_MODEL:-}
+    volumes:
+      - ./dist:/var/lib/grafana/plugins/bertai-panel-ai-rag-table
+      - ./provisioning:/etc/grafana/provisioning
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - local-llm
+
+volumes:
+  ollama_data:

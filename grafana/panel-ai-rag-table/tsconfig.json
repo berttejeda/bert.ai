@@ -1,0 +1,19 @@
+{
+  "extends": "./.config/tsconfig.json",
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "rootDir": "./",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "ts-node": {
+    "compilerOptions": {
+      "module": "commonjs",
+      "target": "es5",
+      "esModuleInterop": true,
+      "moduleResolution": "node"
+    }
+  },
+  "exclude": [".config/jest-setup.ts"]
+}
